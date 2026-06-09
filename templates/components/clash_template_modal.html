@@ -758,7 +758,7 @@
                 renderModules();
                 matchCurrentStateToPreset();
             }
-        } catch (error) { showToast('加载配置失败', 'error'); }
+        } catch (error) { alert('加载配置失败'); }
     }
 
     function closeClashModal() {
@@ -1000,13 +1000,12 @@
         const url = document.getElementById('customModUrl').value.trim();
         const type = document.getElementById('customModType').value;
 
-        if (!name) { showToast('标识名为必填项！', 'warn'); return; }
-        if (!domain_url && !ip_url && !url) { showToast('请至少填写一种规则集的下载地址！', 'warn'); return; }
+        if (!name) return alert('标识名为必填项！');
+        if (!domain_url && !ip_url && !url) return alert('请至少填写一种规则集的下载地址！');
 
         if (editingCustomName) {
             if (name !== editingCustomName && (cacheBuiltin.find(m => m.name === name) || cacheCustom.find(m => m.name === name))) {
-                showToast('该名称已存在，请更换！', 'warn');
-                return;
+                return alert('该名称已存在，请更换！');
             }
 
             const idx = cacheCustom.findIndex(m => m.name === editingCustomName);
@@ -1022,7 +1021,7 @@
             }
 
         } else {
-            if (cacheBuiltin.find(m => m.name === name) || cacheCustom.find(m => m.name === name)) { showToast('该名称已存在，请更换！', 'warn'); return; }
+            if (cacheBuiltin.find(m => m.name === name) || cacheCustom.find(m => m.name === name)) return alert('该名称已存在，请更换！');
             cacheCustom.push({ name, icon, domain_url, ip_url, url, type });
             activeSet.add(name);
         }

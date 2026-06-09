@@ -170,9 +170,9 @@
 </div>
 
 <script>
-    // 通过后端代理请求 GitHub API，避免前端直接访问 GitHub 被墙
-    const RELEASES_API = "/api/releases";
-    const PER_PAGE = 5;
+    // GitHub API 配置
+    const GITHUB_API_BASE = "https://api.github.com/repos/hobin66/nodectl/releases";
+    const PER_PAGE = 5; // 增加每次加载的数量，确保能撑满高度以触发滚动
 
     let RAW_VERSION = "{{.Version}}";
     if (RAW_VERSION === "dev" || RAW_VERSION === "") {
@@ -205,18 +205,19 @@
         statusEl.innerHTML = page === 1 ? "正在拉取最新数据..." : "正在加载更多历史记录...";
 
         try {
-            const res = await fetch(`${RELEASES_API}?per_page=${PER_PAGE}&page=${page}`);
-            const wrapper = await res.json();
-
-            if (!res.ok || wrapper.status !== "success") {
-                const msg = wrapper.message || `HTTP ${res.status}`;
-                if (res.status === 429) statusEl.innerHTML = "请求过于频繁，请稍后再试。";
-                else statusEl.innerHTML = `数据请求失败: ${msg}`;
-                hasMore = false;
+            // 发起请求
+            const res = await fetch(`${GITHUB_API_BASE}?per_page=${PER_PAGE}&page=${page}`);
+            
+            if (!res.ok) {
+                if (res.status === 403) statusEl.innerHTML = "请求过于频繁，请稍后再试 (GitHub API 限制)。";
+                else if (res.status === 404) statusEl.innerHTML = "未找到任何发布记录。";
+                else statusEl.innerHTML = `数据请求失败 (HTTP ${res.status})`;
+                hasMore = false; // 出错后停止继续加载
                 return;
             }
-
-            const data = wrapper.releases || [];
+            
+            const data = await res.json();
+            // 如果返回的数据少于每页数量，说明没有更多数据了
             if (data.length < PER_PAGE) hasMore = false;
 
             if (page === 1) {

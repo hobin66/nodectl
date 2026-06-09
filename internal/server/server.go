@@ -305,7 +305,6 @@ func Start(tmplFS embed.FS) {
 	mux.HandleFunc("/api/update-geoip", withAuthAndSecure(apiUpdateGeoIP))
 	mux.HandleFunc("/api/get-geo-status", withAuthAndSecure(apiGetGeoStatus))
 	// 程序版本更新检查
-	mux.HandleFunc("/api/releases", withAuthAndSecure(apiReleases))
 	mux.HandleFunc("/api/check-update", withAuthAndSecure(apiCheckUpdate))
 	// Mihomo 核心管理
 	mux.HandleFunc("/api/update-mihomo", withAuthAndSecure(apiUpdateMihomo)) // 新增

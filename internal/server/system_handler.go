@@ -473,49 +473,6 @@ func buildRecentLogFingerprint(logs []service.RecentLogEntry) string {
 	return fmt.Sprintf("%d|%s|%s|%s", len(logs), head.Time, head.Level, head.Raw)
 }
 
-// apiReleases 代理 GitHub releases 列表，供前端更新日志弹窗使用
-func apiReleases(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	perPage := 5
-	if v := r.URL.Query().Get("per_page"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 30 {
-			perPage = n
-		}
-	}
-	page := 1
-	if v := r.URL.Query().Get("page"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			page = n
-		}
-	}
-
-	releases, err := service.FetchReleaseHistory(perPage, page)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusBadGateway
-		msg := err.Error()
-		if strings.Contains(msg, "403") {
-			status = http.StatusTooManyRequests
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "error",
-			"message": msg,
-		})
-		w.WriteHeader(status)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":   "success",
-		"releases": releases,
-	})
-}
-
 // apiCheckUpdate 检查程序是否有新版本可用（带后端缓存，避免频繁请求 GitHub）
 func apiCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

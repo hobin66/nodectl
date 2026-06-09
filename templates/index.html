@@ -824,52 +824,6 @@
                     /* 手机端极小的内边距 */
                 }
             }
-
-            /* =========================================================
-           12. 全局 Toast 通知 (Global Toast)
-           ========================================================= */
-            #globalToast {
-                position: fixed;
-                top: 20px;
-                left: 50%;
-                transform: translateX(-50%);
-                z-index: 10000;
-                padding: 12px 24px;
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: 600;
-                opacity: 0;
-                visibility: hidden;
-                transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-                max-width: 500px;
-                text-align: center;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-                pointer-events: none;
-                line-height: 1.5;
-            }
-
-            #globalToast.visible {
-                opacity: 1;
-                visibility: visible;
-            }
-
-            #globalToast.toast-error {
-                background: #fee2e2;
-                color: #b91c1c;
-                border: 1px solid #fecaca;
-            }
-
-            #globalToast.toast-success {
-                background: #dcfce7;
-                color: #166534;
-                border: 1px solid #bbf7d0;
-            }
-
-            #globalToast.toast-warn {
-                background: #fff8e6;
-                color: #b45309;
-                border: 1px solid #fed7aa;
-            }
         </style>
     </head>
 
@@ -1379,8 +1333,6 @@
 
         <footer class="main-footer">Nodectl Core &copy; 2026</footer>
 
-        <div id="globalToast"></div>
-
         <script>
             document.addEventListener("DOMContentLoaded", loadNodesList);
 
@@ -1676,13 +1628,6 @@
             // 打开删除确认弹窗
             function openDeleteModal(uuid) {
                 currentDeleteUUID = uuid;
-                const node = window.allNodesData[uuid];
-                const nameEl = document.getElementById("deleteNodeName");
-                if (nameEl) {
-                    nameEl.textContent = node ? node.name || '(未命名节点)' : '(未知节点)';
-                }
-                const msgArea = document.getElementById("deleteMsgArea");
-                if (msgArea) { msgArea.style.display = "none"; }
                 const modal = document.getElementById("deleteModal");
                 if (modal) modal.style.display = "flex";
             }
@@ -1690,8 +1635,6 @@
             // 关闭删除弹窗
             function closeDeleteModal() {
                 currentDeleteUUID = null;
-                const msgArea = document.getElementById("deleteMsgArea");
-                if (msgArea) { msgArea.style.display = "none"; }
                 const modal = document.getElementById("deleteModal");
                 if (modal) modal.style.display = "none";
             }
@@ -1713,7 +1656,6 @@
                     btn.style.cursor = 'not-allowed';
                 }
 
-                const msgArea = document.getElementById("deleteMsgArea");
                 try {
                     const response = await fetch("/api/delete-node", {
                         method: "POST",
@@ -1722,28 +1664,16 @@
                     });
                     const result = await response.json();
                     if (result.status === "success") {
-                        if (msgArea) {
-                            msgArea.style.display = "block";
-                            msgArea.style.color = "#34c759";
-                            msgArea.textContent = "删除成功";
+                        closeDeleteModal();
+                        loadNodesList();
+                        if (result.message && result.message !== "节点已删除") {
+                            alert(result.message);
                         }
-                        setTimeout(() => {
-                            closeDeleteModal();
-                            loadNodesList();
-                        }, 600);
                     } else {
-                        if (msgArea) {
-                            msgArea.style.display = "block";
-                            msgArea.style.color = "#d74242";
-                            msgArea.textContent = "删除失败: " + (result.message || "未知错误");
-                        }
+                        alert("删除失败: " + result.message);
                     }
                 } catch (error) {
-                    if (msgArea) {
-                        msgArea.style.display = "block";
-                        msgArea.style.color = "#d74242";
-                        msgArea.textContent = "网络错误，请稍后重试";
-                    }
+                    alert("网络错误，请稍后重试");
                 } finally {
                     _deleteInProgress = false;
                     // 恢复按钮状态
@@ -1799,22 +1729,6 @@
                     "none";
                 // 写入本地存储，永久关闭 (除非清除缓存)
                 localStorage.setItem("hide_security_warn", "true");
-            }
-
-            // =========================================================
-            // 全局 Toast 通知 (替代 alert())
-            // =========================================================
-            let _toastTimer = null;
-            function showToast(message, type) {
-                const el = document.getElementById("globalToast");
-                if (!el) return;
-                clearTimeout(_toastTimer);
-                el.className = "toast-" + (type || "error");
-                el.textContent = message;
-                el.classList.add("visible");
-                _toastTimer = setTimeout(function () {
-                    el.classList.remove("visible");
-                }, 2800);
             }
         </script>
 

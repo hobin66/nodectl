@@ -1190,7 +1190,7 @@
         }
 
         const node = window.allNodesData[uuid];
-        if (!node) { showToast('数据加载异常，请刷新', 'error'); return; }
+        if (!node) { alert('数据加载异常，请刷新'); return; }
 
         // 1. 基础信息填充
         document.getElementById('editNodeUUID').value = node.uuid;
@@ -1660,13 +1660,13 @@
         // 从内存数据中获取 install_id 和协议列表
         const node = window.allNodesData && window.allNodesData[uuid];
         if (!node || !node.install_id) {
-            showToast('无法获取节点安装信息，请刷新页面后重试。', 'error');
+            alert('无法获取节点安装信息，请刷新页面后重试。');
             return;
         }
 
         const protocols = node.links ? Object.keys(node.links) : [];
         if (protocols.length === 0) {
-            showToast('该节点没有已知协议信息，无法重置。', 'warn');
+            alert('该节点没有已知协议信息，无法重置。');
             return;
         }
 
@@ -2003,7 +2003,7 @@
         const availableProtos = GLOBAL_SUPPORTED_PROTOCOLS.filter(p => !existingProtos.has(p));
 
         if (availableProtos.length === 0) {
-            showToast('所有支持的协议均已添加', 'warn');
+            alert('所有支持的协议均已添加');
             return;
         }
 
@@ -2105,7 +2105,7 @@
         });
 
         if (enabledProtocols.length === 0) {
-            showToast('没有启用的协议，无法推送配置。', 'warn');
+            alert('没有启用的协议，无法推送配置。');
             return;
         }
 
@@ -2122,7 +2122,7 @@
             }
         }
         if (duplicates.length > 0) {
-            showToast('端口冲突: ' + duplicates.join('; '), 'error');
+            alert('⚠️ 检测到端口冲突，请先修改：\n\n' + duplicates.join('\n'));
             return;
         }
 

@@ -242,65 +242,6 @@ func fetchLatestAlphaRelease(client *http.Client, result *UpdateCheckResult, cur
 	return result
 }
 
-// ReleaseItem 单条发布记录
-type ReleaseItem struct {
-	TagName     string `json:"tag_name"`
-	HTMLURL     string `json:"html_url"`
-	PublishedAt string `json:"published_at"`
-	Body        string `json:"body"`
-}
-
-// FetchReleaseHistory 获取发布历史列表（带缓存），供前端更新日志弹窗使用
-func FetchReleaseHistory(perPage int, page int) ([]ReleaseItem, error) {
-	if perPage <= 0 || perPage > 30 {
-		perPage = 5
-	}
-	if page <= 0 {
-		page = 1
-	}
-
-	url := fmt.Sprintf("%s?per_page=%d&page=%d", githubReleasesListAPI, perPage, page)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "nodectl")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API 返回 HTTP %d", resp.StatusCode)
-	}
-
-	var releases []struct {
-		TagName     string `json:"tag_name"`
-		HTMLURL     string `json:"html_url"`
-		PublishedAt string `json:"published_at"`
-		Body        string `json:"body"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	items := make([]ReleaseItem, len(releases))
-	for i, r := range releases {
-		items[i] = ReleaseItem{
-			TagName:     r.TagName,
-			HTMLURL:     r.HTMLURL,
-			PublishedAt: r.PublishedAt,
-			Body:        r.Body,
-		}
-	}
-	return items, nil
-}
-
 // StartUpdateCheckBackground 在后台启动定期版本检查（每 30 分钟一次）
 // 确保用户打开页面时缓存中已有结果
 func StartUpdateCheckBackground() {

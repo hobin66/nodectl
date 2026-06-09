@@ -4645,14 +4645,14 @@
         if (!batchInlineExpanded) {
             // 展开模式
             if (offlineNotifySelectedUUIDs.size === 0) {
-                showToast("请先勾选要批量修改的节点", "warn");
+                alert("请先勾选要批量修改的节点");
                 return;
             }
             const selected = offlineNotifyRows.filter((n) =>
                 offlineNotifySelectedUUIDs.has(n.uuid),
             );
             if (selected.length === 0) {
-                showToast("未找到已选节点，请刷新后重试", "error");
+                alert("未找到已选节点，请刷新后重试");
                 return;
             }
             document.getElementById("sysBatchOfflineNotifyGrace").value =
@@ -4711,7 +4711,7 @@
             .filter((n) => offlineNotifySelectedUUIDs.has(n.uuid))
             .map((n) => n.uuid);
         if (uuids.length === 0) {
-            showToast("请先勾选要批量修改的节点", "warn");
+            alert("请先勾选要批量修改的节点");
             return;
         }
 
@@ -5020,11 +5020,11 @@
                     } catch (e) { }
                 }, 2000);
             } else {
-                showToast("指令发送失败: " + result.message, "error");
+                alert("指令发送失败: " + result.message);
                 renderGeoBtn("update");
             }
         } catch (e) {
-            showToast("请求错误", "error");
+            alert("请求错误");
             renderGeoBtn("update");
         }
     }
@@ -5137,11 +5137,11 @@
                     } catch (e) { }
                 }, 2000);
             } else {
-                showToast("指令发送失败: " + result.message, "error");
+                alert("指令发送失败: " + result.message);
                 renderMihomoBtn("update");
             }
         } catch (e) {
-            showToast("请求错误", "error");
+            alert("请求错误");
             renderMihomoBtn("update");
         }
     }
@@ -5761,7 +5761,7 @@
 
     async function switchDatabaseAction() {
         if (!dbTestPassed) {
-            showToast("请先通过连接测试", "warn");
+            alert("请先通过连接测试");
             return;
         }
         if (
@@ -5786,13 +5786,13 @@
             });
             const json = await res.json();
             if (json.status === "success") {
-                showToast(json.message || "数据库切换成功", "success");
+                alert("✅ " + (json.message || "数据库切换成功"));
                 await loadDBStatus();
             } else {
-                showToast("切换失败: " + (json.message || "未知错误"), "error");
+                alert("❌ 切换失败: " + (json.message || "未知错误"));
             }
         } catch (e) {
-            showToast("请求失败，请检查网络", "error");
+            alert("❌ 请求失败，请检查网络");
         }
         btn.disabled = false;
         btn.innerHTML = "🔄 直接切换到 PostgreSQL";
@@ -5857,19 +5857,19 @@
             });
             const json = await res.json();
             if (json.status === "success") {
-                showToast(json.message || "已切换回 SQLite", "success");
+                alert("✅ " + (json.message || "已切换回 SQLite"));
                 await loadDBStatus();
             } else {
-                showToast("切换失败: " + (json.message || "未知错误"), "error");
+                alert("❌ 切换失败: " + (json.message || "未知错误"));
             }
         } catch (e) {
-            showToast("请求失败，请检查网络", "error");
+            alert("❌ 请求失败，请检查网络");
         }
     }
 
     async function migrateAndSwitchAction() {
         if (!dbTestPassed) {
-            showToast("请先通过连接测试", "warn");
+            alert("请先通过连接测试");
             return;
         }
         if (

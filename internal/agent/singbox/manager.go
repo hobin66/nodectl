@@ -19,8 +19,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // ProcessStatus sing-box 进程状态
@@ -61,8 +59,6 @@ type Manager struct {
 	maxRestarts    int           // 最大连续重启次数
 	restartDelay   time.Duration // 重启间隔
 	restartCounter int           // 连续崩溃计数器（非正常退出时+1，正常运行一段时间后清零）
-	stopRequested  bool          // 主动停止/重启标记，避免 watcher 误触发自动重启
-	waitDone       chan error    // 由 watcher 独占 Wait，停止流程只等待该 channel
 }
 
 // NewManager 创建 sing-box 管理器
@@ -127,10 +123,6 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // startProcess 内部启动逻辑（调用者须持有锁）
 func (m *Manager) startProcess(ctx context.Context) error {
-	if m.running || m.cmd != nil {
-		return fmt.Errorf("sing-box 已在运行 (PID=%d)", m.pid)
-	}
-
 	// 创建子 context 用于管理进程生命周期
 	procCtx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
@@ -187,9 +179,6 @@ func (m *Manager) startProcess(ctx context.Context) error {
 	m.pid = cmd.Process.Pid
 	m.startedAt = time.Now()
 	m.lastError = ""
-	m.stopRequested = false
-	waitDone := make(chan error, 1)
-	m.waitDone = waitDone
 
 	// 保存 PID 文件
 	m.savePID()
@@ -197,7 +186,7 @@ func (m *Manager) startProcess(ctx context.Context) error {
 	log.Printf("[SingBox] sing-box 已启动 (PID=%d, config=%s)", m.pid, m.configPath)
 
 	// 启动监控协程
-	go m.watchProcess(ctx, cmd, logWriter, waitDone)
+	go m.watchProcess(ctx, cmd, logWriter)
 
 	return nil
 }
@@ -219,37 +208,35 @@ func (m *Manager) stopProcess() error {
 		return nil
 	}
 
-	cmd := m.cmd
-	pid := m.pid
-	waitDone := m.waitDone
-	log.Printf("[SingBox] 正在停止 sing-box (PID=%d)...", pid)
+	log.Printf("[SingBox] 正在停止 sing-box (PID=%d)...", m.pid)
 
 	// 取消 context 触发进程终止
-	m.stopRequested = true
 	if m.cancel != nil {
 		m.cancel()
 	}
 
 	// 等待进程退出（最多 10 秒）
+	done := make(chan struct{})
+	go func() {
+		if m.cmd.Process != nil {
+			m.cmd.Wait()
+		}
+		close(done)
+	}()
+
 	select {
-	case <-waitDone:
+	case <-done:
 		// 正常退出
 	case <-time.After(10 * time.Second):
 		// 超时强杀
-		if cmd.Process != nil {
-			log.Printf("[SingBox] sing-box 停止超时，强制终止 (PID=%d)", pid)
-			cmd.Process.Kill()
-		}
-		select {
-		case <-waitDone:
-		case <-time.After(2 * time.Second):
+		if m.cmd.Process != nil {
+			log.Printf("[SingBox] sing-box 停止超时，强制终止 (PID=%d)", m.pid)
+			m.cmd.Process.Kill()
 		}
 	}
 
 	m.running = false
-	if m.cmd == cmd {
-		m.cmd = nil
-	}
+	m.cmd = nil
 	m.removePID()
 
 	log.Printf("[SingBox] sing-box 已停止")
@@ -317,16 +304,9 @@ func (m *Manager) IsRunning() bool {
 // --- 内部方法 ---
 
 // watchProcess 监控 sing-box 子进程，异常退出时自动重启
-func (m *Manager) watchProcess(ctx context.Context, cmd *exec.Cmd, logWriter io.Writer, waitDone chan<- error) {
+func (m *Manager) watchProcess(ctx context.Context, cmd *exec.Cmd, logWriter io.Writer) {
 	// 等待进程退出
 	err := cmd.Wait()
-
-	if waitDone != nil {
-		select {
-		case waitDone <- err:
-		default:
-		}
-	}
 
 	// 关闭日志文件
 	if closer, ok := logWriter.(io.Closer); ok {
@@ -334,29 +314,18 @@ func (m *Manager) watchProcess(ctx context.Context, cmd *exec.Cmd, logWriter io.
 	}
 
 	m.mu.Lock()
-	pid := 0
-	if cmd.Process != nil {
-		pid = cmd.Process.Pid
-	}
-	isCurrent := m.cmd == cmd
-	stopRequested := m.stopRequested
-	if isCurrent {
-		m.running = false
-		m.cmd = nil
-		m.removePID()
-	}
+	m.running = false
+	m.removePID()
 
 	if err != nil {
-		if isCurrent {
-			m.lastError = err.Error()
-		}
-		log.Printf("[SingBox] sing-box 异常退出 (PID=%d): %v", pid, err)
+		m.lastError = err.Error()
+		log.Printf("[SingBox] sing-box 异常退出 (PID=%d): %v", m.pid, err)
 	} else {
-		log.Printf("[SingBox] sing-box 正常退出 (PID=%d)", pid)
+		log.Printf("[SingBox] sing-box 正常退出 (PID=%d)", m.pid)
 	}
 
 	// 检查是否需要自动重启
-	if !isCurrent || stopRequested || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		// 上下文已取消（用户主动停止），不重启
 		m.mu.Unlock()
 		return
@@ -381,10 +350,6 @@ func (m *Manager) watchProcess(ctx context.Context, cmd *exec.Cmd, logWriter io.
 	}
 
 	m.mu.Lock()
-	if m.running || m.cmd != nil || ctx.Err() != nil {
-		m.mu.Unlock()
-		return
-	}
 	if err := m.startProcess(ctx); err != nil {
 		log.Printf("[SingBox] 自动重启失败: %v", err)
 		m.lastError = fmt.Sprintf("自动重启失败: %v", err)
@@ -403,7 +368,7 @@ func (m *Manager) watchProcess(ctx context.Context, cmd *exec.Cmd, logWriter io.
 	m.mu.Unlock()
 }
 
-// openLogWriter 打开可轮转的 sing-box 专用日志文件，保留启动失败原因且避免无限写盘。
+// openLogWriter 打开日志文件
 func (m *Manager) openLogWriter() (io.Writer, error) {
 	if dir := filepath.Dir(m.logPath); dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -411,13 +376,12 @@ func (m *Manager) openLogWriter() (io.Writer, error) {
 		}
 	}
 
-	return &lumberjack.Logger{
-		Filename:   m.logPath,
-		MaxSize:    5,
-		MaxBackups: 2,
-		MaxAge:     7,
-		Compress:   true,
-	}, nil
+	f, err := os.OpenFile(m.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	return f, nil
 }
 
 // savePID 保存子进程 PID 到文件
@@ -456,31 +420,31 @@ func (m *Manager) ForceKill() {
 
 	// 1. 如果 Manager 正在管理一个进程，直接 SIGKILL
 	if m.running && m.cmd != nil && m.cmd.Process != nil {
-		cmd := m.cmd
 		pid := m.pid
-		waitDone := m.waitDone
 		log.Printf("[SingBox] ForceKill: 正在强制终止 sing-box (PID=%d)...", pid)
 
 		// 取消 context，防止 watchProcess 尝试自动重启
-		m.stopRequested = true
 		if m.cancel != nil {
 			m.cancel()
 		}
 
 		// 直接 SIGKILL，不等待优雅退出
-		cmd.Process.Kill()
+		m.cmd.Process.Kill()
 
 		// 短暂等待进程退出，回收资源
+		done := make(chan struct{})
+		go func() {
+			m.cmd.Wait()
+			close(done)
+		}()
 		select {
-		case <-waitDone:
+		case <-done:
 		case <-time.After(2 * time.Second):
 			// 2 秒内未退出也无妨，SIGKILL 一定会生效
 		}
 
 		m.running = false
-		if m.cmd == cmd {
-			m.cmd = nil
-		}
+		m.cmd = nil
 		m.removePID()
 		log.Printf("[SingBox] ForceKill: sing-box (PID=%d) 已被强制终止", pid)
 	}

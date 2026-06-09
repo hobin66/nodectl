@@ -4,14 +4,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 
 	"nodectl/internal/agent"
-
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
@@ -28,20 +27,17 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("")
 
-	// Agent 主日志直接写入可轮转文件；systemd/OpenRC 已接管 stdout/stderr，避免重复写同一日志。
+	// 统一日志：同时写入 /var/log/nodectl-agent.log 和 stdout
+	// 所有系统（Alpine/Debian/CentOS 等）均可通过 tail -f /var/log/nodectl-agent.log 查看
 	agentLogPath := "/var/log/nodectl-agent.log"
 	if dir := filepath.Dir(agentLogPath); dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			log.Printf("[Agent] 创建日志目录失败 %s: %v", dir, err)
-		} else {
-			log.SetOutput(&lumberjack.Logger{
-				Filename:   agentLogPath,
-				MaxSize:    5,
-				MaxBackups: 3,
-				MaxAge:     14,
-				Compress:   true,
-			})
-		}
+		os.MkdirAll(dir, 0755)
+	}
+	if lf, err := os.OpenFile(agentLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		multiWriter := io.MultiWriter(os.Stdout, lf)
+		log.SetOutput(multiWriter)
+	} else {
+		log.Printf("[Agent] 无法打开日志文件 %s: %v (仅输出到 stdout)", agentLogPath, err)
 	}
 
 	// 设置 GOMEMLIMIT（如果环境变量未覆盖，则使用 5 MiB 软上限）

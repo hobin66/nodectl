@@ -462,7 +462,7 @@
         if (!currentScriptNode) return;
 
         if (!currentScriptNode.install_id) {
-            showToast("该节点未生成 InstallID，请先编辑保存一次", "warn");
+            alert("该节点未生成 InstallID，请先编辑保存一次");
             return;
         }
 
