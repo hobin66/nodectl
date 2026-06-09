@@ -31,13 +31,13 @@ const fixedWSPushIntervalSec = 2
 
 // Runtime Agent 运行时：调度采集与上报，管理信号与生命周期
 type Runtime struct {
-	cfg            *Config
-	collector      *Collector
-	reporter       *Reporter
-	updater        *Updater
-	logDedup       *LogDedup
-	cancel         context.CancelFunc
-	bootID         string
+	cfg       *Config
+	collector *Collector
+	reporter  *Reporter
+	updater   *Updater
+	logDedup  *LogDedup
+	cancel    context.CancelFunc
+	bootID    string
 
 	// 🆕 sing-box 管理模块
 	singboxMgr *singbox.Manager
@@ -900,6 +900,53 @@ func applySNIConfig(pc *singbox.ProtocolConfig, sniMap map[string]string) {
 	}
 }
 
+func cloneProtocolConfig(pc *singbox.ProtocolConfig) (*singbox.ProtocolConfig, error) {
+	if pc == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(pc)
+	if err != nil {
+		return nil, err
+	}
+	var cloned singbox.ProtocolConfig
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return nil, err
+	}
+	return &cloned, nil
+}
+
+func (rt *Runtime) restoreSingboxAfterFailedChange(ctx context.Context, cfgMgr *singbox.ConfigManager, previous *singbox.ProtocolConfig, wasRunning bool, reply func(CommandResult), reason string) {
+	if cfgMgr == nil || previous == nil {
+		return
+	}
+
+	log.Printf("[Agent] %s，尝试恢复旧 sing-box 配置", reason)
+	reply(CommandResult{Type: "progress", Stage: "检测到失败，尝试恢复旧 sing-box 配置..."})
+
+	cfgMgr.Protocols = previous
+	if err := cfgMgr.SaveToCache(); err != nil {
+		log.Printf("[Agent] 恢复旧协议缓存失败: %v", err)
+		reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("⚠️ 恢复旧协议缓存失败: %v", err)})
+	}
+	if err := cfgMgr.GenerateAndSave(); err != nil {
+		log.Printf("[Agent] 恢复旧 sing-box 配置文件失败: %v", err)
+		reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("❌ 恢复旧配置文件失败: %v", err)})
+		return
+	}
+
+	if wasRunning && rt.singboxMgr != nil && !rt.singboxMgr.IsRunning() {
+		if err := rt.singboxMgr.StartAndVerify(ctx, 3*time.Second); err != nil {
+			log.Printf("[Agent] 恢复旧 sing-box 启动失败: %v", err)
+			reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("❌ 恢复旧 sing-box 启动失败: %v", err)})
+			return
+		}
+		reply(CommandResult{Type: "progress", Stage: "已恢复旧 sing-box 配置并重新启动"})
+		return
+	}
+
+	reply(CommandResult{Type: "progress", Stage: "已恢复旧 sing-box 配置"})
+}
+
 // executePushConfig 处理后端下发的推送配置命令
 // payload: {"protocols": ["ss", "hy2", ...], "ports": {"ss": 8388, "hy2": 8443, ...}, "sni": {...}, "tunnel": {...}}
 // 功能：根据前端编辑的启用协议列表和端口配置，更新本地协议配置、重新生成 sing-box 配置并重启
@@ -921,14 +968,18 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 	// 确保 sing-box 管理器已初始化（Agent 负责管理 sing-box 完整生命周期）
 	rt.ensureSingboxManager()
 
-	// 🔑 第一时间强制杀死 sing-box，释放所有端口
-	// 用户执行了协议变更操作，必须先停止 sing-box 再进行任何判断，
-	// 否则旧 sing-box 占用的端口会导致端口冲突误报
-	reply(CommandResult{Type: "progress", Stage: "强制停止 sing-box，释放端口..."})
-	rt.singboxMgr.ForceKill()
-
 	cfgMgr := rt.singboxMgr.GetConfigManager()
 	ctx := context.Background()
+	previousConfig, err := cloneProtocolConfig(cfgMgr.Protocols)
+	if err != nil {
+		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("复制旧配置失败: %v", err)})
+		return
+	}
+	wasRunning := rt.singboxMgr.IsRunning()
+	var previousPorts map[string]bool
+	if wasRunning {
+		previousPorts = singbox.CollectCurrentPorts(previousConfig)
+	}
 
 	// 0. 记录旧协议列表（用于差异显示）
 	oldProtocols := cfgMgr.Protocols.EnabledProtocolList()
@@ -1047,6 +1098,7 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 	reply(CommandResult{Type: "progress", Stage: "保存协议配置缓存..."})
 	if err := cfgMgr.SaveToCache(); err != nil {
 		log.Printf("[Agent] push-config: 保存协议缓存失败: %v", err)
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "保存新协议缓存失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("保存协议缓存失败: %v", err)})
 		return
 	}
@@ -1056,6 +1108,9 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 		reply(CommandResult{Type: "progress", Stage: "检查自签证书..."})
 		if err := cfgMgr.EnsureCerts("nodectl-agent"); err != nil {
 			log.Printf("[Agent] push-config: 证书生成失败: %v", err)
+			rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "生成证书失败")
+			reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("证书生成失败: %v", err)})
+			return
 		}
 	}
 
@@ -1064,16 +1119,15 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 	if !installer.IsInstalled() {
 		reply(CommandResult{Type: "progress", Stage: "sing-box 未安装，正在下载..."})
 		if err := installer.EnsureInstalled(ctx); err != nil {
+			rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "sing-box 安装失败")
 			reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("sing-box 安装失败: %v", err)})
 			return
 		}
 	}
 
-	// 6. sing-box 已在入口处被 ForceKill，无需再次停止
-
-	// 6.5 端口冲突预检测：sing-box 已停止，直接检测端口占用（无需排除端口）
+	// 6.5 端口冲突预检测：旧 sing-box 尚未停止，排除旧配置占用的端口。
 	reply(CommandResult{Type: "progress", Stage: "检查端口冲突..."})
-	portConflicts := singbox.CheckPortConflicts(cfgMgr.Protocols, nil)
+	portConflicts := singbox.CheckPortConflicts(cfgMgr.Protocols, previousPorts)
 	if len(portConflicts) > 0 {
 		conflictMsg := singbox.FormatPortConflictsMessage(portConflicts)
 		log.Printf("[Agent] push-config: 检测到端口冲突:\n%s", conflictMsg)
@@ -1081,9 +1135,7 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 		for _, c := range portConflicts {
 			reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("⚠️ 端口冲突: %s", c.Reason)})
 		}
-		// 端口冲突是致命错误，不继续启动 sing-box（否则 sing-box 必定启动失败）
-		// 注意：此时 sing-box 已停止，如果有旧配置缓存，下次 Agent 重启时会自动恢复
-		reply(CommandResult{Type: "progress", Stage: "提示: sing-box 已停止，请修改端口后重新推送配置以恢复服务"})
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "检测到端口冲突")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("配置推送失败: 检测到 %d 个端口冲突，请修改端口后重试", len(portConflicts))})
 		return
 	}
@@ -1092,16 +1144,20 @@ func (rt *Runtime) executePushConfig(cmd ServerCommand, reply func(CommandResult
 	// 7. 重新生成 sing-box 配置
 	reply(CommandResult{Type: "progress", Stage: "生成 sing-box 配置..."})
 	if err := cfgMgr.GenerateAndSave(); err != nil {
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "生成新 sing-box 配置失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("生成配置失败: %v", err)})
 		return
 	}
 
-	// 8. 启动 sing-box 并验证健康状态（等待 3 秒确认进程存活）
+	// 8. 停止旧 sing-box，启动新 sing-box 并验证健康状态（等待 3 秒确认进程存活）
+	reply(CommandResult{Type: "progress", Stage: "停止旧 sing-box，切换到新配置..."})
+	rt.singboxMgr.ForceKill()
 	reply(CommandResult{Type: "progress", Stage: "启动 sing-box..."})
 	if err := rt.singboxMgr.StartAndVerify(ctx, 3*time.Second); err != nil {
 		log.Printf("[Agent] push-config: sing-box 启动验证失败: %v", err)
 		reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("❌ sing-box 启动失败: %v", err)})
 		reply(CommandResult{Type: "progress", Stage: "提示: 请检查端口是否被其他进程占用，或查看 Agent 日志获取详细错误"})
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "新 sing-box 启动失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("sing-box 启动失败: %v", err)})
 		return
 	}
@@ -1140,13 +1196,15 @@ func (rt *Runtime) executeResetLinks(cmd ServerCommand, reply func(CommandResult
 	// 确保 sing-box 管理器已初始化（Agent 负责管理 sing-box 完整生命周期）
 	rt.ensureSingboxManager()
 
-	// 第一时间强制杀死 sing-box，释放所有端口
-	reply(CommandResult{Type: "progress", Stage: "强制停止 sing-box，释放端口..."})
-	rt.singboxMgr.ForceKill()
-
 	reply(CommandResult{Type: "progress", Stage: "使用内置管理器重置链接..."})
 
 	cfgMgr := rt.singboxMgr.GetConfigManager()
+	previousConfig, cloneErr := cloneProtocolConfig(cfgMgr.Protocols)
+	if cloneErr != nil {
+		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("复制旧配置失败: %v", cloneErr)})
+		return
+	}
+	wasRunning := rt.singboxMgr.IsRunning()
 
 	// 创建重置处理器（链接上报已迁移至 WS 通道，由下方 reportLinksUpdate 负责）
 	publicIP := api.GetPublicIP()
@@ -1154,6 +1212,7 @@ func (rt *Runtime) executeResetLinks(cmd ServerCommand, reply func(CommandResult
 
 	// 执行批量重置
 	if err := resetHandler.ResetMultiple(context.Background(), payload.Protocols); err != nil {
+		rt.restoreSingboxAfterFailedChange(context.Background(), cfgMgr, previousConfig, wasRunning, reply, "重置链接失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("重置链接失败: %v", err)})
 		return
 	}
@@ -1186,40 +1245,51 @@ func (rt *Runtime) executeReinstallSingbox(cmd ServerCommand, reply func(Command
 	// 确保 sing-box 管理器已初始化（Agent 负责管理 sing-box 完整生命周期）
 	rt.ensureSingboxManager()
 
-	// 第一时间强制杀死 sing-box，释放所有端口
-	reply(CommandResult{Type: "progress", Stage: "强制停止 sing-box，释放端口..."})
-	rt.singboxMgr.ForceKill()
-
 	reply(CommandResult{Type: "progress", Stage: "使用内置管理器重新安装..."})
 
 	ctx := context.Background()
+	cfgMgr := rt.singboxMgr.GetConfigManager()
+	previousConfig, err := cloneProtocolConfig(cfgMgr.Protocols)
+	if err != nil {
+		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("复制旧配置失败: %v", err)})
+		return
+	}
+	wasRunning := rt.singboxMgr.IsRunning()
+	var previousPorts map[string]bool
+	if wasRunning {
+		previousPorts = singbox.CollectCurrentPorts(previousConfig)
+	}
 
 	// 1. 重新下载 sing-box
 	reply(CommandResult{Type: "progress", Stage: "下载 sing-box..."})
 	installer := rt.singboxMgr.GetInstaller()
 	if err := installer.EnsureInstalled(ctx); err != nil {
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "下载 sing-box 失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("下载 sing-box 失败: %v", err)})
 		return
 	}
 
 	// 2. 确保证书
 	reply(CommandResult{Type: "progress", Stage: "检查证书..."})
-	cfgMgr := rt.singboxMgr.GetConfigManager()
-	cfgMgr.EnsureCerts("nodectl-agent")
+	if err := cfgMgr.EnsureCerts("nodectl-agent"); err != nil {
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "检查证书失败")
+		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("证书检查失败: %v", err)})
+		return
+	}
 
 	// 3. 更新协议配置
 	for _, proto := range payload.Protocols {
 		cfgMgr.Protocols.SetEnabled(proto, true)
 	}
-	cfgMgr.SaveToCache()
 
 	// 4. 端口冲突预检测
 	reply(CommandResult{Type: "progress", Stage: "检查端口冲突..."})
-	portConflicts := singbox.CheckPortConflicts(cfgMgr.Protocols, nil)
+	portConflicts := singbox.CheckPortConflicts(cfgMgr.Protocols, previousPorts)
 	if len(portConflicts) > 0 {
 		for _, c := range portConflicts {
 			reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("⚠️ 端口冲突: %s", c.Reason)})
 		}
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "重新安装检测到端口冲突")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("重新安装失败: 检测到 %d 个端口冲突，请修改端口后重试", len(portConflicts))})
 		return
 	}
@@ -1227,13 +1297,22 @@ func (rt *Runtime) executeReinstallSingbox(cmd ServerCommand, reply func(Command
 	// 5. 生成配置并启动
 	reply(CommandResult{Type: "progress", Stage: "生成 sing-box 配置..."})
 	if err := cfgMgr.GenerateAndSave(); err != nil {
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "重新安装生成配置失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("生成配置失败: %v", err)})
 		return
 	}
+	if err := cfgMgr.SaveToCache(); err != nil {
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "重新安装保存协议缓存失败")
+		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("保存协议缓存失败: %v", err)})
+		return
+	}
+	reply(CommandResult{Type: "progress", Stage: "停止旧 sing-box，切换到新配置..."})
+	rt.singboxMgr.ForceKill()
 	reply(CommandResult{Type: "progress", Stage: "启动 sing-box..."})
 	if err := rt.singboxMgr.StartAndVerify(ctx, 3*time.Second); err != nil {
 		log.Printf("[Agent] reinstall: sing-box 启动验证失败: %v", err)
 		reply(CommandResult{Type: "progress", Stage: fmt.Sprintf("❌ sing-box 启动失败: %v", err)})
+		rt.restoreSingboxAfterFailedChange(ctx, cfgMgr, previousConfig, wasRunning, reply, "重新安装后 sing-box 启动失败")
 		reply(CommandResult{Type: "result", Status: "error", Message: fmt.Sprintf("sing-box 启动失败: %v", err)})
 		return
 	}

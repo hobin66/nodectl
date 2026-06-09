@@ -17,6 +17,9 @@ const (
 	DefaultCertDir       = "/var/lib/nodectl-agent/certs"
 	DefaultCertPath      = "/var/lib/nodectl-agent/certs/fullchain.pem"
 	DefaultKeyPath       = "/var/lib/nodectl-agent/certs/privkey.pem"
+
+	// SingBoxLogLevel 由 agent 固定控制 sing-box 日志级别，减少连接日志噪声。
+	SingBoxLogLevel = "warn"
 )
 
 // ConfigManager sing-box 配置管理器
@@ -238,7 +241,7 @@ func (cm *ConfigManager) GenerateConfig() ([]byte, error) {
 
 	cfg := sbConfig{
 		Log: sbLog{
-			Level:     "info",
+			Level:     SingBoxLogLevel,
 			Timestamp: true,
 		},
 		Outbounds: []sbOutbound{
