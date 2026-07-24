@@ -420,10 +420,12 @@ EOF
 name="nodectl-agent"
 description="NodeCTL Agent - 一体化代理管理器"
 command="/usr/local/bin/nodectl-agent"
-command_background=true
+supervisor=supervise-daemon
+rc_cgroup_cleanup="NO"
 pidfile="/run/nodectl-agent.pid"
-output_log="/var/log/nodectl-agent.log"
-error_log="/var/log/nodectl-agent.log"
+respawn_max=0
+respawn_period=1800
+respawn_delay=5
 
 depend() {
     need net
@@ -450,9 +452,6 @@ WorkingDirectory=/var/lib/nodectl-agent
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
-
-StandardOutput=append:/var/log/nodectl-agent.log
-StandardError=append:/var/log/nodectl-agent.log
 
 [Install]
 WantedBy=multi-user.target

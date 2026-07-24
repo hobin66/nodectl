@@ -381,14 +381,12 @@ func (r *Reporter) ReconnectWithBackoff(ctx context.Context) error {
 	count := r.reconnectCount
 	r.mu.Unlock()
 
-	// 计算退避时间
-	backoff := time.Duration(1<<uint(count-1)) * time.Second
-	if backoff > r.maxBackoff {
-		backoff = r.maxBackoff
+	backoff := reconnectBackoff(count, r.maxBackoff)
+	// 添加随机抖动 (0-25% 的退避时间)。退避时间很小时不调用 rand.N，
+	// 避免把 0 作为上界传入而触发 panic。
+	if jitterLimit := backoff / 4; jitterLimit > 0 {
+		backoff += rand.N(jitterLimit)
 	}
-	// 添加随机抖动 (0-25% 的退避时间)
-	jitter := rand.N(backoff / 4)
-	backoff += jitter
 
 	log.Printf("[Agent] 第 %d 次重连，等待 %v ...", count, backoff)
 
@@ -403,4 +401,31 @@ func (r *Reporter) ReconnectWithBackoff(ctx context.Context) error {
 	}
 
 	return r.Connect(ctx)
+}
+
+// reconnectBackoff 计算指数退避时间。
+//
+// 不能先计算 1<<count 再转换为 time.Duration：重连次数较大时，
+// 纳秒值会在乘以 time.Second 前溢出为负数，最终导致 rand.N 触发
+// "invalid argument to N" 并使整个 agent panic。
+func reconnectBackoff(count int, maxBackoff time.Duration) time.Duration {
+	if maxBackoff <= 0 {
+		return 0
+	}
+	if count < 1 {
+		count = 1
+	}
+
+	backoff := time.Second
+	for i := 1; i < count; i++ {
+		// 在翻倍可能超过上限前直接封顶，避免任何 duration 溢出。
+		if backoff >= maxBackoff || backoff > maxBackoff/2 {
+			return maxBackoff
+		}
+		backoff *= 2
+	}
+	if backoff > maxBackoff {
+		return maxBackoff
+	}
+	return backoff
 }

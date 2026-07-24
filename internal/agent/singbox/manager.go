@@ -19,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // ProcessStatus sing-box 进程状态
@@ -376,12 +378,13 @@ func (m *Manager) openLogWriter() (io.Writer, error) {
 		}
 	}
 
-	f, err := os.OpenFile(m.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, err
-	}
-
-	return f, nil
+	return &lumberjack.Logger{
+		Filename:   m.logPath,
+		MaxSize:    25,
+		MaxBackups: 4,
+		MaxAge:     14,
+		Compress:   true,
+	}, nil
 }
 
 // savePID 保存子进程 PID 到文件
