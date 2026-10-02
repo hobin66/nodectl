@@ -72,6 +72,10 @@ func TestResolveTrafficResetAtOnRuleChange_FixedDayFutureTargetAllowsCurrentMont
 
 func TestShouldResetNodeTrafficNow_FixedDaySameMonthBeforeTargetDoesNotCountAsReset(t *testing.T) {
 	loc := time.FixedZone("UTC+8", 8*3600)
+	oldLocal := time.Local
+	time.Local = loc
+	defer func() { time.Local = oldLocal }()
+
 	now := time.Date(2026, time.April, 2, 0, 1, 0, 0, loc)
 	lastReset := time.Date(2026, time.April, 1, 10, 0, 0, 0, loc)
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # NodeCTL 一键安装脚本
-# 项目地址: https://github.com/hobin66/nodectl
-# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/hobin66/nodectl/main/install.sh)
+# 项目地址: https://github.com/illria/nodectl
+# 用法: sh -c "$(curl -fsSL https://raw.githubusercontent.com/illria/nodectl/main/install.sh)"
 
 set -e
 
@@ -19,7 +19,7 @@ warn()  { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
 err()   { printf "${RED}[ERR]${NC} %s\n" "$*" >&2; }
 
 # ========== 常量 ==========
-GITHUB_REPO="hobin66/nodectl"
+GITHUB_REPO="illria/nodectl"
 INSTALL_DIR="/opt/nodectl"
 DATA_DIR="${INSTALL_DIR}/data"
 BIN_PATH="${INSTALL_DIR}/nodectl"
@@ -31,7 +31,7 @@ DEFAULT_PORT=8080
 check_root() {
     if [ "$(id -u)" != "0" ]; then
         err "此脚本需要 root 权限运行"
-        err "请使用: sudo bash <(curl -fsSL https://raw.githubusercontent.com/hobin66/nodectl/main/install.sh)"
+        err '请使用: sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/illria/nodectl/main/install.sh)"'
         exit 1
     fi
 }
@@ -109,14 +109,18 @@ install_deps() {
 # ========== 获取最新版本号 ==========
 get_latest_version() {
     local channel="$1"
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases"
     local version=""
 
     if [ "$channel" = "stable" ]; then
-        # 稳定版：获取最新的非预发布版本
-        version=$(curl -fsSL "${api_url}/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        # 稳定版：跟随 Releases 页面重定向，从最终 /tag/{version} 地址提取版本。
+        local release_url
+        release_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${GITHUB_REPO}/releases/latest" 2>/dev/null)
+        case "$release_url" in
+            */releases/tag/*) version="${release_url##*/}" ;;
+        esac
     else
-        # 开发版（alpha）：获取最新的预发布版本
+        # Alpha 需要筛选多个预发布版本，保留独立的 releases API 路径。
+        local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases"
         version=$(curl -fsSL "${api_url}" 2>/dev/null | grep '"tag_name"' | grep -i 'alpha' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     fi
 
@@ -346,7 +350,7 @@ install_nt_command() {
     cat > "${NT_BIN}" <<'NTEOF'
 #!/bin/sh
 # NodeCTL 管理工具 (nt)
-# 项目地址: https://github.com/hobin66/nodectl
+# 项目地址: https://github.com/illria/nodectl
 # 用法: nt [命令]  或直接运行 nt 进入交互式菜单
 # 兼容: Alpine (OpenRC) / Debian (systemd)
 
@@ -366,7 +370,7 @@ warn()  { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
 err()   { printf "${RED}[ERR]${NC} %s\n" "$*" >&2; }
 
 # ========== 常量 ==========
-GITHUB_REPO="hobin66/nodectl"
+GITHUB_REPO="illria/nodectl"
 INSTALL_DIR="/opt/nodectl"
 DATA_DIR="${INSTALL_DIR}/data"
 BIN_PATH="${INSTALL_DIR}/nodectl"
@@ -522,12 +526,17 @@ do_restart() {
 # ========== 获取最新版本号 ==========
 get_latest_version() {
     local channel="$1"
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases"
     local version=""
 
     if [ "$channel" = "stable" ]; then
-        version=$(curl -fsSL "${api_url}/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        # 稳定版：跟随 Releases 页面重定向，从最终 /tag/{version} 地址提取版本。
+        local release_url
+        release_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${GITHUB_REPO}/releases/latest" 2>/dev/null)
+        case "$release_url" in
+            */releases/tag/*) version="${release_url##*/}" ;;
+        esac
     else
+        local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases"
         version=$(curl -fsSL "${api_url}" 2>/dev/null | grep '"tag_name"' | grep -i 'alpha' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     fi
 

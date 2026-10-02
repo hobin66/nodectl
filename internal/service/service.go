@@ -32,7 +32,7 @@ func AddNode(name string, routingType int) (*database.NodePool, error) {
 
 	node := &database.NodePool{
 		Name:        name,
-		RoutingType: routingType,             // 1:直连, 2:落地
+		RoutingType: routingType,             // 1:中转, 2:落地
 		Links:       make(map[string]string), // 初始化空的连接 map
 	}
 
@@ -95,7 +95,7 @@ func UpdateNode(uuid string, name string, routingType int, links map[string]stri
 func ReorderNodes(routingType int, uuids []string) error {
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
 		for index, uuid := range uuids {
-			// 更新每个节点的 RoutingType (因为可能从直连拖到了落地)
+			// 更新每个节点的 RoutingType (因为可能从中转拖到了落地)
 			// 并更新 SortIndex 为当前数组的下标
 			err := tx.Model(&database.NodePool{}).
 				Where("uuid = ?", uuid).

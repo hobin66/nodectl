@@ -48,8 +48,9 @@ func apiSubClash(w http.ResponseWriter, r *http.Request) {
 	baseURL := getBaseURL(r)
 	token := r.URL.Query().Get("token")
 
-	relayURL := fmt.Sprintf("%s/sub/raw/2?token=%s", baseURL, token)
-	exitURL := fmt.Sprintf("%s/sub/raw/1?token=%s", baseURL, token)
+	// routing_type=1 是中转节点，routing_type=2 是落地节点。
+	relayURL := fmt.Sprintf("%s/sub/raw/1?token=%s", baseURL, token)
+	exitURL := fmt.Sprintf("%s/sub/raw/2?token=%s", baseURL, token)
 
 	yamlContent, err := service.RenderClashConfig(relayURL, exitURL, baseURL, token)
 	if err != nil {

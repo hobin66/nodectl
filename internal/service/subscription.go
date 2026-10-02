@@ -23,7 +23,7 @@ type ClashProvider struct {
 }
 
 // GenerateRawNodesYAML 动态生成指定路由类型的节点 YAML
-// routingType: 1=直连, 2=落地
+// routingType: 1=中转，2=落地；0=禁用不下发。
 func GenerateRawNodesYAML(routingType int, useFlag bool) (string, error) {
 	var nodes []database.NodePool
 	// 按照 SortIndex 排序获取节点
@@ -112,7 +112,7 @@ func GenerateRawNodesYAML(routingType int, useFlag bool) (string, error) {
 
 	// 注入机场订阅节点 (Airport Nodes)
 	var airportNodes []database.AirportNode
-	// 根据 routingType (1=直连, 2=落地) 获取启用的机场节点，并按订阅源和原始顺序排序
+	// 根据 routingType (1=中转，2=落地) 获取启用的机场节点，并按订阅源和原始顺序排序
 	if err := database.DB.Where("routing_type = ?", routingType).
 		Order("sub_id, original_index ASC").Find(&airportNodes).Error; err == nil {
 
@@ -133,7 +133,7 @@ func GenerateRawNodesYAML(routingType int, useFlag bool) (string, error) {
 
 	// 注入自定义节点 (Custom Nodes)
 	var customNodes []database.CustomNode
-	// routingType: 1=直连, 2=落地; 屏蔽(0)的不加入订阅
+	// routingType: 1=中转，2=落地；禁用(0)的不加入订阅
 	if err := database.DB.Where("routing_type = ?", routingType).
 		Order("created_at ASC").Find(&customNodes).Error; err == nil {
 
@@ -203,10 +203,10 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// GenerateV2RaySubBase64 生成通用 Base64 订阅 (包含直连和落地)
+// GenerateV2RaySubBase64 生成通用 Base64 订阅 (包含中转和落地)
 func GenerateV2RaySubBase64(useFlag bool) (string, error) {
 	var nodes []database.NodePool
-	// 取出直连(1)和落地(2)的节点，排除被屏蔽的
+	// 取出中转(1)和落地(2)的节点，排除被禁用的
 	if err := database.DB.Where("routing_type IN ? AND is_blocked = ?", []int{1, 2}, false).
 		Order("sort_index ASC").Find(&nodes).Error; err != nil {
 		logger.Log.Error("从数据库获取全量聚合节点失败", "error", err)
@@ -303,7 +303,7 @@ func GenerateV2RaySubBase64(useFlag bool) (string, error) {
 
 	// 注入机场订阅节点 (Airport Nodes)
 	var airportNodes []database.AirportNode
-	// 获取所有启用的机场节点 (包括直连1 和 落地2)
+	// 获取所有启用的机场节点 (包括中转1 和 落地2)
 	if err := database.DB.Where("routing_type IN ?", []int{1, 2}).
 		Order("sub_id, original_index ASC").Find(&airportNodes).Error; err == nil {
 

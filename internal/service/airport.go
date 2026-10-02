@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"nodectl/internal/database"
@@ -18,8 +19,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DeleteAirportSubscription 删除关联的节点和订阅本身，并清理可能存在于内存中的测试废土
+// 手动同步、后台同步和删除共用同一把锁，避免删除期间重建订阅节点。
+var airportSubscriptionSyncMu sync.Mutex
+
+// DeleteAirportSubscription 串行删除关联节点和订阅本身。
 func DeleteAirportSubscription(subID string) error {
+	airportSubscriptionSyncMu.Lock()
+	defer airportSubscriptionSyncMu.Unlock()
+
 	tx := database.DB.Begin()
 	// 1. 删除关联的节点
 	if err := tx.Where("sub_id = ?", subID).Delete(&database.AirportNode{}).Error; err != nil {
@@ -36,6 +43,9 @@ func DeleteAirportSubscription(subID string) error {
 
 // SyncAirportSubscription 执行订阅更新核心逻辑
 func SyncAirportSubscription(subID string) error {
+	airportSubscriptionSyncMu.Lock()
+	defer airportSubscriptionSyncMu.Unlock()
+
 	var sub database.AirportSub
 	if err := database.DB.First(&sub, "id = ?", subID).Error; err != nil {
 		return err
@@ -95,7 +105,10 @@ func SyncAirportSubscription(subID string) error {
 		parseTraffic(respV2ray.Header.Get("Subscription-Userinfo"))
 	}
 
-	bodyBytes, _ := io.ReadAll(respV2ray.Body)
+	bodyBytes, err := io.ReadAll(respV2ray.Body)
+	if err != nil {
+		return fmt.Errorf("读取机场订阅响应失败: %w", err)
+	}
 	content := string(bodyBytes)
 
 	// 2. 解析节点链接 (自动识别 Base64 或 Clash)
@@ -108,7 +121,7 @@ func SyncAirportSubscription(subID string) error {
 
 	if len(newLinks) == 0 {
 		logger.Log.Warn("订阅未解析到任何节点", "sub_name", sub.Name)
-		return nil
+		return fmt.Errorf("机场订阅 %q 未解析到任何节点", sub.Name)
 	}
 
 	// 3. 获取旧节点状态 (Name -> RoutingType 映射)
@@ -183,7 +196,9 @@ func SyncAirportSubscription(subID string) error {
 	}
 
 	// 6. 提交事务 (这一步非常重要，不提交则上面的节点和流量都不会保存)
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("提交机场订阅更新失败: %w", err)
+	}
 	return nil
 }
 

@@ -3,13 +3,16 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"nodectl/internal/database"
+	"nodectl/internal/githubrelease"
 	"nodectl/internal/logger"
 
 	"golang.org/x/mod/semver"
@@ -18,7 +21,10 @@ import (
 const (
 	agentStartupCheckDelay  = 60 * time.Second
 	agentStartupCheckWindow = 60 * time.Second
+	agentStartupLatestURL   = "https://github.com/illria/nodectl/releases/latest"
 )
+
+var agentStartupAssetPattern = regexp.MustCompile(`^nodectl-agent-linux-(amd64|arm64)-(v[0-9]+\.[0-9]+\.[0-9]+.*)$`)
 
 var (
 	agentStartupUpdateOnce sync.Once
@@ -28,7 +34,7 @@ var (
 // 设计目标：
 //  1. 不阻塞主流程（异步执行）
 //  2. 只在进程生命周期内执行一次
-//  3. 先从 GitHub 获取最新版本，与数据库中各节点的版本号比较，
+//  3. 仅查询现有节点所需的发布渠道，并从 Agent 产物名提取版本号，
 //     若版本号一致则不下发更新命令（避免无谓的命令下发）
 //  4. 仅对在线节点且版本落后的 Agent 下发 check-agent-update
 //  5. 汇总式日志输出，不逐节点打印
@@ -83,26 +89,35 @@ func runAgentStartupSilentUpdateCheck(ctx context.Context) (retErr error) {
 		nodes = nil
 	}()
 
-	// 获取最新的正式版本和 alpha 版本
-	latestStableVersion, latestAlphaVersion, err := fetchLatestAgentVersionsFromGitHub(ctx)
-	if err != nil {
-		return fmt.Errorf("获取 GitHub 最新 Agent 版本失败: %w", err)
-	}
-
-	if latestStableVersion == "" && latestAlphaVersion == "" {
-		return fmt.Errorf("未找到任何可用版本")
-	}
-
 	if err := database.DB.Select("uuid", "install_id", "name", "agent_version").Find(&nodes).Error; err != nil {
 		return fmt.Errorf("查询节点列表失败: %w", err)
 	}
 
 	total := len(nodes)
 	if total == 0 {
-		logger.Log.Info("启动静默 Agent 更新检查完成：无节点",
-			"latest_stable", latestStableVersion,
-			"latest_alpha", latestAlphaVersion,
-		)
+		logger.Log.Info("启动静默 Agent 更新检查完成：无节点")
+		return nil
+	}
+
+	versions := fetchLatestAgentVersionsForNodes(
+		ctx,
+		&http.Client{Timeout: 15 * time.Second},
+		agentStartupLatestURL,
+		githubReleasesListAPI,
+		nodes,
+	)
+	latestStableVersion, latestAlphaVersion = versions.Stable, versions.Alpha
+	if versions.StableErr != nil {
+		logger.Log.Warn("获取 Stable Agent 版本失败", "error", versions.StableErr)
+	}
+	if versions.AlphaErr != nil {
+		logger.Log.Warn("获取 Alpha Agent 版本失败", "error", versions.AlphaErr)
+	}
+	if latestStableVersion == "" && latestAlphaVersion == "" {
+		if err := errors.Join(versions.StableErr, versions.AlphaErr); err != nil {
+			return fmt.Errorf("获取 GitHub 最新 Agent 版本失败: %w", err)
+		}
+		logger.Log.Info("启动静默 Agent 更新检查完成：无有效版本节点", "total_nodes", total)
 		return nil
 	}
 
@@ -153,7 +168,7 @@ func runAgentStartupSilentUpdateCheck(ctx context.Context) (retErr error) {
 		}
 
 		// 数据库版本 >= 目标版本：已是最新，无需下发
-		if semver.Compare(dbVer, targetVer) >= 0 {
+		if !agentVersionNeedsUpdate(dbVer, targetVer) {
 			skippedUpToDate++
 			continue
 		}
@@ -214,26 +229,73 @@ func runAgentStartupSilentUpdateCheck(ctx context.Context) (retErr error) {
 	return nil
 }
 
-// fetchLatestAgentVersionsFromGitHub 获取最新的正式版本和 alpha 版本
-// 返回: (最新正式版本, 最新alpha版本, error)
-func fetchLatestAgentVersionsFromGitHub(ctx context.Context) (stableVersion, alphaVersion string, err error) {
-	// 获取所有 releases
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubReleasesListAPI, nil)
+type agentLatestVersions struct {
+	Stable    string
+	Alpha     string
+	StableErr error
+	AlphaErr  error
+}
+
+// 只查询数据库中实际存在的 Agent 渠道；纯 Stable 节点不会请求 GitHub API。
+func fetchLatestAgentVersionsForNodes(ctx context.Context, client *http.Client, stableURL, alphaAPIURL string, nodes []database.NodePool) agentLatestVersions {
+	needsStable, needsAlpha := false, false
+	for _, node := range nodes {
+		version := normalizeSemver(node.AgentVersion)
+		if !semver.IsValid(version) {
+			continue
+		}
+		if strings.Contains(strings.ToLower(semver.Prerelease(version)), "alpha") {
+			needsAlpha = true
+		} else {
+			needsStable = true
+		}
+	}
+
+	var versions agentLatestVersions
+	if needsStable {
+		versions.Stable, versions.StableErr = fetchLatestStableAgentVersion(ctx, client, stableURL)
+	}
+	if needsAlpha {
+		versions.Alpha, versions.AlphaErr = fetchLatestAlphaAgentVersion(ctx, client, alphaAPIURL)
+	}
+	return versions
+}
+
+func fetchLatestStableAgentVersion(ctx context.Context, client *http.Client, latestURL string) (string, error) {
+	_, releaseURL, err := githubrelease.FetchLatestRelease(ctx, client, latestURL, "nodectl-core-agent-startup-check")
 	if err != nil {
-		return "", "", err
+		return "", err
+	}
+	assetsURL, err := githubrelease.ExpandedAssetsURL(releaseURL)
+	if err != nil {
+		return "", err
+	}
+	body, finalURL, err := githubrelease.FetchReleasePage(ctx, client, assetsURL, "nodectl-core-agent-startup-check")
+	if err != nil {
+		return "", err
+	}
+	version := latestAgentVersionFromAssets(githubrelease.Assets(body, finalURL), false)
+	if version == "" {
+		return "", fmt.Errorf("Stable release 中未找到带 SHA256 的 Agent 产物")
+	}
+	return version, nil
+}
+
+func fetchLatestAlphaAgentVersion(ctx context.Context, client *http.Client, apiURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "nodectl-core-agent-startup-check")
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("github api status not ok: %s", resp.Status)
+		return "", fmt.Errorf("GitHub Alpha releases API 返回 %s", resp.Status)
 	}
 
 	var releases []struct {
@@ -243,43 +305,66 @@ func fetchLatestAgentVersionsFromGitHub(ctx context.Context) (stableVersion, alp
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return "", "", err
+		return "", err
 	}
 
-	// 遍历所有 releases，找出最新的正式版本和 alpha 版本
+	latest := ""
 	for _, release := range releases {
-		tagLower := strings.ToLower(release.TagName)
-
-		// 检查是否是 alpha 版本
-		if strings.Contains(tagLower, "-alpha") {
-			candidate := normalizeSemver(release.TagName)
-			if semver.IsValid(candidate) {
-				if alphaVersion == "" {
-					alphaVersion = candidate
-				} else {
-					currentAlpha := normalizeSemver(alphaVersion)
-					if semver.Compare(candidate, currentAlpha) > 0 {
-						alphaVersion = candidate
-					}
-				}
-			}
-		} else {
-			// 正式版本（无预发布后缀）
-			candidate := normalizeSemver(release.TagName)
-			if semver.IsValid(candidate) && semver.Prerelease(candidate) == "" {
-				if stableVersion == "" {
-					stableVersion = candidate
-				} else {
-					currentStable := normalizeSemver(stableVersion)
-					if semver.Compare(candidate, currentStable) > 0 {
-						stableVersion = candidate
-					}
-				}
-			}
+		if !strings.Contains(strings.ToLower(release.TagName), "alpha") {
+			continue
+		}
+		assets := make([]githubrelease.Asset, 0, len(release.Assets))
+		for _, asset := range release.Assets {
+			assets = append(assets, githubrelease.Asset{Name: asset.Name})
+		}
+		candidate := latestAgentVersionFromAssets(assets, true)
+		if candidate != "" && (latest == "" || semver.Compare(candidate, latest) > 0) {
+			latest = candidate
 		}
 	}
+	if latest == "" {
+		return "", fmt.Errorf("Alpha release 中未找到带 SHA256 的 Agent 产物")
+	}
+	return latest, nil
+}
 
-	return stableVersion, alphaVersion, nil
+func latestAgentVersionFromAssets(assets []githubrelease.Asset, alpha bool) string {
+	names := make(map[string]bool, len(assets))
+	for _, asset := range assets {
+		names[asset.Name] = true
+	}
+	latest := ""
+	for _, asset := range assets {
+		candidate := agentVersionFromAssetName(asset.Name)
+		if candidate == "" || !names[asset.Name+".sha256"] {
+			continue
+		}
+		prerelease := strings.ToLower(semver.Prerelease(candidate))
+		if (alpha && !strings.Contains(prerelease, "alpha")) || (!alpha && prerelease != "") {
+			continue
+		}
+		if latest == "" || semver.Compare(candidate, latest) > 0 {
+			latest = candidate
+		}
+	}
+	return latest
+}
+
+func agentVersionFromAssetName(name string) string {
+	if strings.HasSuffix(name, ".sha256") {
+		return ""
+	}
+	matches := agentStartupAssetPattern.FindStringSubmatch(name)
+	if len(matches) != 3 || !semver.IsValid(matches[2]) {
+		return ""
+	}
+	return matches[2]
+}
+
+func agentVersionNeedsUpdate(current, target string) bool {
+	current = normalizeSemver(current)
+	target = normalizeSemver(target)
+	return semver.IsValid(current) && semver.IsValid(target) && semver.Compare(current, target) < 0
 }
 
 func normalizeSemver(v string) string {

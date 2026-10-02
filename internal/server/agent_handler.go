@@ -4,15 +4,17 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"nodectl/internal/database"
+	"nodectl/internal/githubrelease"
 	"nodectl/internal/logger"
 	"nodectl/internal/service"
 	"nodectl/internal/version"
@@ -107,9 +109,8 @@ func apiAgentInitConfig(w http.ResponseWriter, r *http.Request) {
 // GET /api/public/download/agent?arch={amd64|arm64}&channel={stable|alpha}
 // 安装脚本通过此接口下载与面板版本匹配的 Agent 二进制
 //
-// 核心逻辑：通过 GitHub API 查询面板版本对应的 Release，从 assets 列表中
-// 动态匹配 agent 文件名（前缀 nodectl-agent-linux-{arch}-），避免面板版本号
-// 与 agent 版本号不一致导致 404 错误。
+// 核心逻辑：读取 GitHub Release 页面并匹配 agent 文件名，避免依赖 GitHub API
+// 配额，也避免面板版本号与 agent 版本号不一致导致 404 错误。
 func apiDownloadAgent(w http.ResponseWriter, r *http.Request) {
 	arch := strings.TrimSpace(r.URL.Query().Get("arch"))
 	if arch == "" {
@@ -135,14 +136,13 @@ func apiDownloadAgent(w http.ResponseWriter, r *http.Request) {
 	// 获取 GitHub 仓库信息
 	githubRepo := loadSysConfigValue("github_repo")
 	if githubRepo == "" {
-		githubRepo = "hobin66/nodectl" // 默认仓库
+		githubRepo = "illria/nodectl"
 	}
 
 	// 构造 Release Tag（使用面板版本号，因为 Agent 二进制附在面板的 Release 中）
 	releaseTag := getPanelReleaseTag(channel)
 
-	// 通过 GitHub API 动态查找 agent 文件的真实下载 URL
-	// 这样即使 agent 版本号与面板版本号不同也能正确匹配
+	// 从常规 GitHub Release 页面动态查找 agent 文件，版本号可独立于面板版本。
 	agentPrefix := fmt.Sprintf("nodectl-agent-linux-%s-", arch)
 	downloadURL, err := findAgentAssetURL(githubRepo, releaseTag, agentPrefix)
 	if err != nil {
@@ -378,9 +378,9 @@ var agentAssetCache = struct {
 	ttl:    5 * time.Minute, // 缓存 5 分钟
 }
 
-// findAgentAssetURL 通过 GitHub API 查找指定 Release 中匹配前缀的 agent 二进制下载 URL
+// findAgentAssetURL 从指定 Release 页面查找匹配前缀的 agent 二进制下载 URL。
 // 参数：
-//   - repo: GitHub 仓库（如 "hobin66/nodectl"）
+//   - repo: GitHub 仓库（如 "illria/nodectl"）
 //   - tag:  Release tag（如 "v0.4.32-alpha"）
 //   - prefix: 文件名前缀（如 "nodectl-agent-linux-amd64-"）
 //
@@ -398,53 +398,28 @@ func findAgentAssetURL(repo, tag, prefix string) (string, error) {
 	}
 	agentAssetCache.RUnlock()
 
-	// 2. 调用 GitHub API 查询 Release
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
+	releaseURL := fmt.Sprintf("https://github.com/%s/releases/tag/%s", strings.Trim(repo, "/"), url.PathEscape(tag))
+	assetsURL, err := githubrelease.ExpandedAssetsURL(releaseURL)
+	if err != nil {
+		return "", err
+	}
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	body, finalURL, err := githubrelease.FetchReleasePage(context.Background(), client, assetsURL, "nodectl-panel/"+version.Version)
 	if err != nil {
-		return "", fmt.Errorf("构造请求失败: %w", err)
+		return "", fmt.Errorf("读取 GitHub release 页面失败: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "nodectl-panel/"+version.Version)
+	assets := githubrelease.Assets(body, finalURL)
 
-	// 如果配置了 GitHub Token 则使用（提高 API 限额）
-	if token := loadSysConfigValue("github_token"); token != "" {
-		req.Header.Set("Authorization", "token "+token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("GitHub API 请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("GitHub API 返回 %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 3. 解析 Release JSON
-	var release struct {
-		Assets []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", fmt.Errorf("解析 Release JSON 失败: %w", err)
-	}
-
-	// 4. 在 assets 中查找匹配前缀且非 .sha256 的文件
-	for _, asset := range release.Assets {
+	// 在页面中查找匹配前缀且非 .sha256 的文件。
+	for _, asset := range assets {
 		if strings.HasPrefix(asset.Name, prefix) && !strings.HasSuffix(asset.Name, ".sha256") {
 			// 写入缓存
 			agentAssetCache.Lock()
-			agentAssetCache.data[cacheKey] = asset.BrowserDownloadURL
+			agentAssetCache.data[cacheKey] = asset.URL
 			agentAssetCache.expiry[cacheKey] = time.Now().Add(agentAssetCache.ttl)
 			agentAssetCache.Unlock()
 
-			return asset.BrowserDownloadURL, nil
+			return asset.URL, nil
 		}
 	}
 

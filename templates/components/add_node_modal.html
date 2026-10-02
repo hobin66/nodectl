@@ -124,7 +124,7 @@
         color: #34c759;
     }
 
-    /* 直连绿 */
+    /* 中转绿 */
     .add-segment-option.active[data-type="2"] {
         color: #f5a623;
     }
@@ -321,7 +321,7 @@
                 <div class="add-form-group">
                     <div class="add-row">
                         <div class="add-segmented-control">
-                            <div class="add-segment-option active" data-type="1" onclick="selectAddGroup(1, this)">直连
+                            <div class="add-segment-option active" data-type="1" onclick="selectAddGroup(1, this)">中转
                             </div>
                             <div class="add-segment-option" data-type="2" onclick="selectAddGroup(2, this)">落地</div>
                         </div>
@@ -418,7 +418,7 @@
         // 重置提示器状态
         document.getElementById('addNodeIndicator').style.opacity = '0';
 
-        // 重置分组选择，默认选中直连
+        // 重置分组选择，默认选中中转
         document.querySelectorAll('#addNodeModal .add-segment-option').forEach(b => b.classList.remove('active'));
         document.querySelector('#addNodeModal .add-segment-option[data-type="1"]').classList.add('active');
         document.getElementById('nodeGroupVal').value = '1';

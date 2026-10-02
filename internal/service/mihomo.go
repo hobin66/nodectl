@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	MihomoApiURL      = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
-	MihomoDBConfigKey = "mihomo_core_version"
+	MihomoLatestReleaseURL = "https://github.com/MetaCubeX/mihomo/releases/latest"
+	MihomoDBConfigKey      = "mihomo_core_version"
 )
 
 var GlobalMihomo *MihomoService
@@ -86,70 +86,57 @@ func (s *MihomoService) GetLocalVersion() string {
 	return config.Value
 }
 
-// GetRemoteVersion 调用 GitHub API 获取最新版本和下载链接 (适配各种架构)
+// GetRemoteVersion 通过 Release 重定向获取最新版本，并构造当前平台的下载链接。
 func (s *MihomoService) GetRemoteVersion() (version string, downloadURL string, isZip bool, err error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, _ := http.NewRequest("GET", MihomoApiURL, nil)
-	req.Header.Set("User-Agent", "NodeCTL-Core-Manager")
-
-	resp, err := client.Do(req)
+	version, _, err = fetchLatestGitHubRelease(client, MihomoLatestReleaseURL, "NodeCTL-Core-Manager")
 	if err != nil {
 		return "", "", false, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", false, fmt.Errorf("GitHub API 错误: %s", resp.Status)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	filename, isZip, err := mihomoAssetFilename(runtime.GOOS, runtime.GOARCH, version)
+	if err != nil {
 		return "", "", false, err
 	}
+	downloadURL = fmt.Sprintf("https://github.com/MetaCubeX/mihomo/releases/download/%s/%s", url.PathEscape(version), filename)
+	return version, downloadURL, isZip, nil
+}
 
-	// 利用 Go 内置 runtime 动态匹配当前系统
-	keyword := fmt.Sprintf("mihomo-%s-%s", runtime.GOOS, runtime.GOARCH)
-
-	for _, asset := range release.Assets {
-		// 排除 alpha 测试版
-		if strings.Contains(asset.Name, keyword) && !strings.Contains(asset.Name, "alpha") {
-			if strings.HasSuffix(asset.Name, ".gz") {
-				return release.TagName, asset.BrowserDownloadURL, false, nil
-			} else if strings.HasSuffix(asset.Name, ".zip") {
-				return release.TagName, asset.BrowserDownloadURL, true, nil
-			}
-		}
+func mihomoAssetFilename(goos, goarch, version string) (string, bool, error) {
+	var ext string
+	switch goos {
+	case "windows":
+		ext = "zip"
+	case "linux", "darwin":
+		ext = "gz"
+	default:
+		return "", false, fmt.Errorf("不支持的 Mihomo 操作系统: %s", goos)
 	}
-
-	return "", "", false, errors.New("未找到匹配当前系统架构的 Mihomo 核心文件")
+	if strings.TrimSpace(goarch) == "" || strings.TrimSpace(version) == "" {
+		return "", false, errors.New("Mihomo 下载平台或版本为空")
+	}
+	filename := fmt.Sprintf("mihomo-%s-%s-%s.%s", goos, goarch, version, ext)
+	return filename, ext == "zip", nil
 }
 
 // ForceUpdate 强制下载并更新核心
 func (s *MihomoService) ForceUpdate() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	tempArchive := filepath.Join(s.dirPath, "temp_archive")
+	tempBin := s.binPath + ".tmp"
+	defer os.Remove(tempArchive)
+	defer os.Remove(tempBin)
 
 	version, dlURL, isZip, err := s.GetRemoteVersion()
 	if err != nil {
 		return fmt.Errorf("获取远程版本失败: %w", err)
 	}
 
-	tempArchive := filepath.Join(s.dirPath, "temp_archive")
-
 	// 复用与 geo 一致的通用下载策略
 	if err := downloadFile(tempArchive, dlURL); err != nil {
 		return fmt.Errorf("文件下载失败: %w", err)
 	}
-	defer os.Remove(tempArchive)
 
-	tempBin := s.binPath + ".tmp"
 	if isZip {
 		if err := s.extractZip(tempArchive, tempBin); err != nil {
 			return err
@@ -162,10 +149,11 @@ func (s *MihomoService) ForceUpdate() error {
 
 	// Linux/Mac 赋予执行权限
 	if runtime.GOOS != "windows" {
-		os.Chmod(tempBin, 0755)
+		if err := os.Chmod(tempBin, 0755); err != nil {
+			return fmt.Errorf("设置 Mihomo 核心权限失败: %w", err)
+		}
 	}
 
-	os.Remove(s.binPath)
 	if err := os.Rename(tempBin, s.binPath); err != nil {
 		return fmt.Errorf("替换文件失败: %w", err)
 	}

@@ -107,7 +107,7 @@ type NodePool struct {
 	OfflineNotifyEnabled     bool              `gorm:"column:offline_notify_enabled;default:false" json:"offline_notify_enabled"`
 	OfflineNotifyGraceSec    int               `gorm:"column:offline_notify_grace_sec;default:180" json:"offline_notify_grace_sec"`
 	OfflineLastNotifyAt      *time.Time        `gorm:"column:offline_last_notify_at" json:"offline_last_notify_at"`
-	RoutingType              int               `gorm:"column:routing_type;default:1" json:"routing_type"` //路由类型
+	RoutingType              int               `gorm:"column:routing_type;default:1" json:"routing_type"` // 0=禁用，1=中转，2=落地
 	IsBlocked                bool              `gorm:"column:is_blocked;default:false" json:"is_blocked"` // 是否屏蔽
 	Links                    map[string]string `gorm:"column:links;serializer:json" json:"links"`
 	LinkIPModes              map[string]int    `gorm:"column:link_ip_modes;serializer:json" json:"link_ip_modes"` //协议级别的IP生成模式
@@ -266,13 +266,13 @@ func (SysConfig) TableName() string {
 // AirportSub 机场订阅源表
 type AirportSub struct {
 	ID        string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
-	Name      string    `gorm:"type:varchar(64)" json:"name"` // 机场名称
-	URL       string    `gorm:"type:text" json:"url"`         // 订阅链接
-	Upload    int64     `gorm:"default:0" json:"upload"`      // 已用上行 (Bytes)
-	Download  int64     `gorm:"default:0" json:"download"`    // 已用下行 (Bytes)
-	Total     int64     `gorm:"default:0" json:"total"`       // 总流量 (Bytes)
-	Expire    int64     `gorm:"default:0" json:"expire"`      // 到期时间戳
-	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
+	Name      string    `gorm:"type:varchar(64)" json:"name"`                             // 机场名称
+	URL       string    `gorm:"type:text" json:"url"`                                     // 订阅链接
+	Upload    int64     `gorm:"default:0" json:"upload"`                                  // 已用上行 (Bytes)
+	Download  int64     `gorm:"default:0" json:"download"`                                // 已用下行 (Bytes)
+	Total     int64     `gorm:"default:0" json:"total"`                                   // 总流量 (Bytes)
+	Expire    int64     `gorm:"default:0" json:"expire"`                                  // 到期时间戳
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime:false" json:"updated_at"` // 仅成功同步时显式更新
 }
 
 func (AirportSub) TableName() string {
@@ -293,7 +293,7 @@ type AirportNode struct {
 	Name          string `gorm:"index" json:"name"`                    // 节点名称
 	Protocol      string `gorm:"type:varchar(32)" json:"protocol"`     // 协议类型 (新增)
 	Link          string `gorm:"type:text" json:"link"`                // 原始链接 (vmess://, ss:// 等)
-	RoutingType   int    `gorm:"default:0" json:"routing_type"`        // 0=不启用, 1=直连, 2=落地
+	RoutingType   int    `gorm:"default:0" json:"routing_type"`        // 0=禁用，1=中转，2=落地
 	OriginalIndex int    `gorm:"default:0" json:"original_index"`      // 原始排序索引
 }
 
@@ -376,7 +376,7 @@ type CustomNode struct {
 	Link        string    `gorm:"type:text" json:"link"`            // 原始协议链接 (vmess://, vless://, ss:// 等)
 	Name        string    `gorm:"type:varchar(255)" json:"name"`    // 从链接中解析出的节点名称
 	Protocol    string    `gorm:"type:varchar(32)" json:"protocol"` // 协议类型
-	RoutingType int       `gorm:"default:1" json:"routing_type"`    // 1=直连, 2=落地, 0=屏蔽
+	RoutingType int       `gorm:"default:1" json:"routing_type"`    // 0=禁用，1=中转，2=落地
 	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt   time.Time `gorm:"column:updated_at" json:"updated_at"`
 }

@@ -198,7 +198,7 @@
     }
 
     /* 与 edit_node_modal.html 路由类型颜色一致 */
-    .cn-routing-btn.active-direct {
+    .cn-routing-btn.active-relay {
         background: #34c759;
         color: #fff;
     }
@@ -208,7 +208,7 @@
         color: #fff;
     }
 
-    .cn-routing-btn.active-block {
+    .cn-routing-btn.active-disabled {
         background: #d74242;
         color: #fff;
     }
@@ -629,26 +629,26 @@
     }
 
     function cnRenderRoutingButtons(id, routingType) {
-        const directBtn = document.getElementById('cn_rt_direct_' + id);
+        const relayBtn = document.getElementById('cn_rt_relay_' + id);
         const landingBtn = document.getElementById('cn_rt_landing_' + id);
-        const blockBtn = document.getElementById('cn_rt_block_' + id);
+        const disabledBtn = document.getElementById('cn_rt_disabled_' + id);
 
-        if (!directBtn) return;
+        if (!relayBtn) return;
 
         // 清除所有 active 类
-        directBtn.className = 'cn-routing-btn';
+        relayBtn.className = 'cn-routing-btn';
         landingBtn.className = 'cn-routing-btn';
-        blockBtn.className = 'cn-routing-btn';
+        disabledBtn.className = 'cn-routing-btn';
 
         switch (routingType) {
             case 1:
-                directBtn.classList.add('active-direct');
+                relayBtn.classList.add('active-relay');
                 break;
             case 2:
                 landingBtn.classList.add('active-landing');
                 break;
             case 0:
-                blockBtn.classList.add('active-block');
+                disabledBtn.classList.add('active-disabled');
                 break;
         }
     }
@@ -667,9 +667,9 @@
 
         emptyState.style.display = 'none';
         container.innerHTML = cnNodes.map(node => {
-            const directClass = node.routing_type === 1 ? 'active-direct' : '';
+            const relayClass = node.routing_type === 1 ? 'active-relay' : '';
             const landingClass = node.routing_type === 2 ? 'active-landing' : '';
-            const blockClass = node.routing_type === 0 ? 'active-block' : '';
+            const disabledClass = node.routing_type === 0 ? 'active-disabled' : '';
 
             const linkInfo = cnExtractLinkInfo(node.link);
             const badgeHtml = linkInfo.proto ? `<span class="cn-proto-badge">${linkInfo.proto}</span>` : '';
@@ -683,12 +683,12 @@
                             ${badgeHtml}${displayName}
                         </div>
                         <div class="cn-routing-group" onclick="event.stopPropagation()">
-                            <button class="cn-routing-btn ${directClass}" id="cn_rt_direct_${node.id}" 
-                                    onclick="cnSetRouting('${node.id}', 1, event)">直连</button>
+                            <button class="cn-routing-btn ${relayClass}" id="cn_rt_relay_${node.id}"
+                                    onclick="cnSetRouting('${node.id}', 1, event)">中转</button>
                             <button class="cn-routing-btn ${landingClass}" id="cn_rt_landing_${node.id}" 
                                     onclick="cnSetRouting('${node.id}', 2, event)">落地</button>
-                            <button class="cn-routing-btn ${blockClass}" id="cn_rt_block_${node.id}" 
-                                    onclick="cnSetRouting('${node.id}', 0, event)">屏蔽</button>
+                            <button class="cn-routing-btn ${disabledClass}" id="cn_rt_disabled_${node.id}"
+                                    onclick="cnSetRouting('${node.id}', 0, event)">禁用</button>
                         </div>
                         <div class="cn-item-del" onclick="event.stopPropagation(); cnDeleteNode('${node.id}')" title="删除">${cnTrashSvg}</div>
                     </div>

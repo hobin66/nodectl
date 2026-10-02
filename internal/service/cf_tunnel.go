@@ -2330,34 +2330,14 @@ func OneClickSetupCFTunnel(token, subdomain, domain, tunnelName string, progress
 
 // ===================== cloudflared 远程版本检查与自动更新 =====================
 
-// GetCloudflaredRemoteVersion 从 GitHub API 获取 cloudflared 最新版本号
+// GetCloudflaredRemoteVersion 跟随 GitHub Releases 重定向获取 cloudflared 最新版本号。
 func GetCloudflaredRemoteVersion() (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/cloudflare/cloudflared/releases/latest", nil)
+	tag, _, err := fetchLatestGitHubRelease(client, "https://github.com/cloudflare/cloudflared/releases/latest", "nodectl")
 	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %w", err)
+		return "", fmt.Errorf("获取 cloudflared release 失败: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "nodectl")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GitHub API 返回 HTTP %d", resp.StatusCode)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	return strings.TrimSpace(release.TagName), nil
+	return strings.TrimSpace(tag), nil
 }
 
 // GetCloudflaredVersionStatus 获取 cloudflared 版本状态（供前端版本检测用）

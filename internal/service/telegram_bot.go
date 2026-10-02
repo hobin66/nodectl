@@ -1472,9 +1472,12 @@ func handleNodeInfo(bot *tgbotapi.BotAPI, chatID int64, messageID int, data stri
 		return
 	}
 
-	routingType := "直连节点"
-	if node.RoutingType != 1 {
-		routingType = "中转/落地节点"
+	routingType := "禁用节点"
+	switch node.RoutingType {
+	case 1:
+		routingType = "中转节点"
+	case 2:
+		routingType = "落地节点"
 	}
 
 	upStr := formatBytes(node.TrafficUp)

@@ -268,7 +268,7 @@ func apiAirportNodeRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 0=禁用, 1=直连, 2=落地
+	// 0=禁用，1=中转，2=落地
 	if err := database.DB.Model(&database.AirportNode{}).
 		Where("id = ?", req.ID).
 		Update("routing_type", req.RoutingType).Error; err != nil {
@@ -341,8 +341,8 @@ func apiAirportEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 执行数据库更新
-	if err := database.DB.Model(&database.AirportSub{}).Where("id = ?", req.ID).Updates(updates).Error; err != nil {
+	// 名称和链接编辑不是成功同步，不改变 UpdatedAt。
+	if err := database.DB.Model(&database.AirportSub{}).Where("id = ?", req.ID).UpdateColumns(updates).Error; err != nil {
 		logger.Log.Error("编辑机场订阅失败", "id", req.ID, "name", oldSub.Name, "error", err, "ip", clientIP, "path", reqPath)
 		sendJSON(w, "error", "数据库更新失败")
 		return

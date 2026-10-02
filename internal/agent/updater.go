@@ -21,12 +21,14 @@ import (
 	"syscall"
 	"time"
 
+	"nodectl/internal/githubrelease"
+
 	"golang.org/x/mod/semver"
 )
 
 // GitHub 仓库坐标（编译期可通过 ldflags 覆盖）
 var (
-	UpdateRepoOwner = "hobin66"
+	UpdateRepoOwner = "illria"
 	UpdateRepoName  = "nodectl"
 )
 
@@ -440,7 +442,7 @@ type ghAsset struct {
 }
 
 // findLatestAgentRelease 查询最新 release 并匹配当前架构的 agent 产物
-// 根据当前渠道选择不同的 API 和筛选逻辑
+// Alpha 单独列出预发布版本；Stable 通过 latest 重定向读取 Release 页面。
 // 返回: 目标版本号、二进制下载 URL、sha256 下载 URL
 func (u *Updater) findLatestAgentRelease(ctx context.Context) (version, binaryURL, sha256URL string, err error) {
 	channel := GetChannel()
@@ -450,84 +452,55 @@ func (u *Updater) findLatestAgentRelease(ctx context.Context) (version, binaryUR
 		// Alpha 版本：查询所有 releases，筛选最新的 alpha 版本
 		return u.findLatestAlphaRelease(ctx)
 	case ChannelStable:
-		// 正式版本：使用 latest API
+		// 稳定版路径不访问 GitHub API。
 		return u.findLatestStableRelease(ctx)
 	default:
 		return "", "", "", fmt.Errorf("不支持更新检查的渠道: %s", channel)
 	}
 }
 
-// findLatestStableRelease 获取最新的正式版本（main 分支）
+// findLatestStableRelease 从 releases/latest 的重定向页面寻找当前架构的 Agent 产物。
 func (u *Updater) findLatestStableRelease(ctx context.Context) (version, binaryURL, sha256URL string, err error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", UpdateRepoOwner, UpdateRepoName)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	latestURL := fmt.Sprintf("https://github.com/%s/%s/releases/latest", UpdateRepoOwner, UpdateRepoName)
+	_, releasePageURL, err := githubrelease.FetchLatestRelease(ctx, u.client, latestURL, fmt.Sprintf("nodectl-agent/%s", AgentVersion))
+	if err != nil {
+		return "", "", "", fmt.Errorf("获取稳定版 release tag 失败: %w", err)
+	}
+	assetsURL, err := githubrelease.ExpandedAssetsURL(releasePageURL)
 	if err != nil {
 		return "", "", "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", fmt.Sprintf("nodectl-agent/%s", AgentVersion))
-
-	resp, err := u.client.Do(req)
+	body, finalAssetsURL, err := githubrelease.FetchReleasePage(ctx, u.client, assetsURL, fmt.Sprintf("nodectl-agent/%s", AgentVersion))
 	if err != nil {
-		return "", "", "", fmt.Errorf("请求 GitHub API 失败: %w", err)
+		return "", "", "", fmt.Errorf("获取稳定版 Agent 产物页面失败: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", "", fmt.Errorf("GitHub API 返回 %d", resp.StatusCode)
-	}
-
-	// 限制读取体积（防止异常响应撑爆内存）
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if err != nil {
-		return "", "", "", fmt.Errorf("读取响应失败: %w", err)
-	}
-
-	var release ghRelease
-	if err := json.Unmarshal(body, &release); err != nil {
-		return "", "", "", fmt.Errorf("解析 release JSON 失败: %w", err)
-	}
-
-	// 构造匹配模式: nodectl-agent-linux-amd64-v1.4.2
+	assets := githubrelease.Assets(body, finalAssetsURL)
 	arch := runtime.GOARCH
 	pattern := regexp.MustCompile(fmt.Sprintf(assetPattern, regexp.QuoteMeta(arch)))
-
-	var matchedAsset *ghAsset
+	var matchedAsset *githubrelease.Asset
 	var matchedVersion string
-
-	for i := range release.Assets {
-		asset := &release.Assets[i]
-		if strings.HasSuffix(asset.Name, ".sha256") {
+	for i := range assets {
+		if strings.HasSuffix(assets[i].Name, ".sha256") {
 			continue
 		}
-		matches := pattern.FindStringSubmatch(asset.Name)
+		matches := pattern.FindStringSubmatch(assets[i].Name)
 		if matches != nil && len(matches) >= 2 {
-			matchedAsset = asset
-			matchedVersion = matches[1] // 提取版本号
+			matchedAsset = &assets[i]
+			matchedVersion = matches[1]
 			break
 		}
 	}
-
 	if matchedAsset == nil {
-		return "", "", "", fmt.Errorf("未找到匹配 %s 架构的 agent 产物", arch)
+		return "", "", "", fmt.Errorf("稳定版 release 中未找到 %s 架构的 agent 产物", arch)
 	}
 
-	// 查找对应的 .sha256 文件
 	sha256Name := matchedAsset.Name + ".sha256"
-	var sha256Asset *ghAsset
-	for i := range release.Assets {
-		if release.Assets[i].Name == sha256Name {
-			sha256Asset = &release.Assets[i]
-			break
+	for _, asset := range assets {
+		if asset.Name == sha256Name {
+			return matchedVersion, matchedAsset.URL, asset.URL, nil
 		}
 	}
-
-	if sha256Asset == nil {
-		return "", "", "", fmt.Errorf("未找到 SHA256 校验文件: %s", sha256Name)
-	}
-
-	return matchedVersion, matchedAsset.BrowserDownloadURL, sha256Asset.BrowserDownloadURL, nil
+	return "", "", "", fmt.Errorf("稳定版 release 中未找到 SHA256 校验文件: %s", sha256Name)
 }
 
 // findLatestAlphaRelease 获取最新的 Alpha 版本（alpha 分支）

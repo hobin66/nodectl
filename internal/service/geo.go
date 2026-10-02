@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,8 +22,8 @@ import (
 var GlobalGeoIP *GeoService
 
 const (
-	GeoDownloadURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
-	GeoApiURL      = "https://api.github.com/repos/P3TERX/GeoLite.mmdb/releases/latest"
+	GeoDownloadURL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-Country.mmdb"
+	GeoReleaseURL  = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest"
 	GeoDBConfigKey = "geo_db_version"
 )
 
@@ -99,10 +98,11 @@ func (s *GeoService) GetLocalVersion() string {
 	return config.Value
 }
 
-// GetRemoteVersion 调用 GitHub API 获取最新 Release 的 Tag
+// GetRemoteVersion 通过 GitHub Releases 普通网页重定向获取最新 Tag。
+// 通过普通 GitHub Releases 页面获取版本，避免共享出口 IP 命中未认证 API 速率限制。
 func (s *GeoService) GetRemoteVersion() (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", GeoApiURL, nil)
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, GeoReleaseURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -115,20 +115,23 @@ func (s *GeoService) GetRemoteVersion() (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API Error: %s", resp.Status)
+		return "", fmt.Errorf("GitHub Release 页面返回: %s", resp.Status)
 	}
 
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-	if release.TagName == "" {
-		return "", errors.New("未找到 tag_name")
+	if resp.Request == nil || resp.Request.URL == nil {
+		return "", errors.New("无法解析 GitHub Release 最终地址")
 	}
 
-	return release.TagName, nil
+	parts := strings.Split(strings.Trim(resp.Request.URL.Path, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] != "tag" {
+		return "", fmt.Errorf("无法从 Release 地址解析版本: %s", resp.Request.URL.String())
+	}
+
+	version := strings.TrimSpace(parts[len(parts)-1])
+	if version == "" || strings.EqualFold(version, "latest") {
+		return "", errors.New("未找到 Release 版本号")
+	}
+	return version, nil
 }
 
 // ForceUpdate 强制下载并更新数据库版本号
@@ -136,9 +139,12 @@ func (s *GeoService) ForceUpdate() error {
 	slog.Info("开始后台更新 GeoIP 数据库...")
 
 	// 1. 获取远程最新版本号
-	remoteVersion, err := s.GetRemoteVersion()
-	if err != nil {
-		return fmt.Errorf("获取远程版本失败: %w", err)
+	remoteVersion, versionErr := s.GetRemoteVersion()
+	if versionErr != nil {
+		// 版本查询失败不应阻断数据库下载。数据库文件本身使用 releases/latest/download，
+		// 即使 GitHub API 或版本页暂时不可用，也尽量保证 Geo 功能可恢复。
+		slog.Warn("获取 GeoIP 远程版本失败，将继续尝试下载数据库", "err", versionErr)
+		remoteVersion = "latest"
 	}
 
 	tempPath := s.path + ".update"

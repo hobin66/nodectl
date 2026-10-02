@@ -1859,34 +1859,14 @@ func GetEffectiveOptIP() (string, error) {
 
 // ===================== CloudflareST 远程版本检查与自动更新 =====================
 
-// GetCFIPOptRemoteVersion 从 GitHub API 获取 CloudflareST 最新版本号
+// GetCFIPOptRemoteVersion 跟随 GitHub Releases 重定向获取 CloudflareST 最新版本号。
 func GetCFIPOptRemoteVersion() (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/XIU2/CloudflareSpeedTest/releases/latest", nil)
+	tag, _, err := fetchLatestGitHubRelease(client, "https://github.com/XIU2/CloudflareSpeedTest/releases/latest", "nodectl")
 	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %w", err)
+		return "", fmt.Errorf("获取 CloudflareST release 失败: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "nodectl")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GitHub API 返回 HTTP %d", resp.StatusCode)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	return strings.TrimSpace(release.TagName), nil
+	return strings.TrimSpace(tag), nil
 }
 
 // GetCFIPOptVersionStatus 获取 CloudflareST 版本状态（供前端版本检测用）

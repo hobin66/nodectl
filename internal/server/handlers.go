@@ -208,7 +208,7 @@ func customGroupName(rule service.CustomProxyRule) string {
 func airportRoutingTypeLabel(rt int) string {
 	switch rt {
 	case 1:
-		return "直连"
+		return "中转"
 	case 2:
 		return "落地"
 	default:
@@ -218,8 +218,10 @@ func airportRoutingTypeLabel(rt int) string {
 
 func nodeRoutingTypeLabel(rt int) string {
 	switch rt {
+	case 0:
+		return "禁用"
 	case 1:
-		return "直连"
+		return "中转"
 	case 2:
 		return "落地"
 	default:

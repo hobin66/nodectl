@@ -204,8 +204,8 @@ func RenderClashConfig(relayURL, exitURL, baseURL, token string) (string, error)
 	}
 
 	data := ClashTemplateData{
-		RelaySubURL:             exitURL,
-		ExitSubURL:              relayURL,
+		RelaySubURL:             relayURL,
+		ExitSubURL:              exitURL,
 		ActiveModules:           finalActiveMods,
 		BaseURL:                 baseURL,
 		Token:                   token,

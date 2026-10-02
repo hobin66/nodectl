@@ -5125,8 +5125,8 @@
             return;
         }
 
-        // 按 routing_type 分组：1=直连, 2=落地, 其他放最后
-        const directNodes = list.filter(n => (n.routing_type || 0) === 1);
+        // 按 routing_type 分组：1=中转, 2=落地, 其他放最后
+        const relayNodes = list.filter(n => (n.routing_type || 0) === 1);
         const landNodes = list.filter(n => (n.routing_type || 0) === 2);
         const otherNodes = list.filter(n => (n.routing_type || 0) !== 1 && (n.routing_type || 0) !== 2);
 
@@ -5138,10 +5138,10 @@
         }
 
         let html = '';
-        if (directNodes.length > 0) {
-            html += cftBuildGroupLabel('直连节点', '#34c759', directNodes.length);
+        if (relayNodes.length > 0) {
+            html += cftBuildGroupLabel('中转节点', '#34c759', relayNodes.length);
         }
-        html += directNodes.map(cftBuildTunnelNodeItem).join('');
+        html += relayNodes.map(cftBuildTunnelNodeItem).join('');
         if (landNodes.length > 0) {
             html += cftBuildGroupLabel('落地节点', '#f5a623', landNodes.length);
         }

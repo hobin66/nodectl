@@ -150,7 +150,7 @@
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#007aff;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                     更新日志
                 </div>
-                <a href="https://github.com/hobin66/nodectl" target="_blank" class="github-link" title="访问 GitHub 项目主页">
+                <a href="https://github.com/illria/nodectl" target="_blank" rel="noopener noreferrer" class="github-link" title="访问 GitHub 项目主页">
                     <svg class="github-icon-svg" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
                     </svg>
@@ -170,158 +170,76 @@
 </div>
 
 <script>
-    // GitHub API 配置
-    const GITHUB_API_BASE = "https://api.github.com/repos/hobin66/nodectl/releases";
-    const PER_PAGE = 5; // 增加每次加载的数量，确保能撑满高度以触发滚动
-
     let RAW_VERSION = "{{.Version}}";
     if (RAW_VERSION === "dev" || RAW_VERSION === "") {
-        RAW_VERSION = "v1.0.0"; // 默认开发版本号
+        RAW_VERSION = "dev";
     }
     const DISPLAY_VERSION = RAW_VERSION.replace(/^v/, '');
+    const GITHUB_RELEASES_URL = "https://github.com/illria/nodectl/releases";
+    let releaseSummaryLoaded = false;
 
-    // 状态管理
-    let currentPage = 1;
-    let hasMore = true;
-    let isFetching = false;
-    let allReleases = [];
+    function renderReleaseSummary(data) {
+        const list = document.getElementById("releaseList");
+        const current = data.current_version ? `v${data.current_version}` : `v${DISPLAY_VERSION}`;
+        const latest = data.latest_version ? `v${data.latest_version}` : "暂不可用";
+        const card = document.createElement("div");
+        card.className = "release-item";
 
-    // 版本比对工具函数
-    function isNewVersionAvailable(current, latest) {
-        if (!current || !latest) return false;
-        const cleanCurrent = current.replace(/^v/, '');
-        const cleanLatest = latest.replace(/^v/, '');
-        // 简单对比：只要字符串不相等就认为是新版本 (生产环境建议用更严谨的 semver 对比库)
-        return cleanCurrent !== cleanLatest;
-    }
+        const heading = document.createElement("div");
+        heading.className = "release-header";
+        const version = document.createElement("span");
+        version.className = "release-version";
+        version.textContent = data.has_update ? `发现新版本 ${latest}` : `当前版本 ${current}`;
+        heading.appendChild(version);
+        card.appendChild(heading);
 
-    // 加载发布记录的核心函数
-    async function loadReleases(page) {
-        if (isFetching || !hasMore) return;
-        isFetching = true;
+        const body = document.createElement("div");
+        body.className = "release-body";
+        body.textContent = data.error
+            ? `版本检查暂时不可用：${data.error}`
+            : data.has_update
+                ? `当前版本：${current}。打开 GitHub Release 查看更新说明。`
+                : data.latest_version
+                    ? `已是最新版本。打开 GitHub Releases 查看历史更新说明。`
+                    : "打开 GitHub Releases 查看发布信息。";
+        card.appendChild(body);
 
-        const statusEl = document.getElementById('loadingStatus');
-        statusEl.style.display = "block";
-        statusEl.innerHTML = page === 1 ? "正在拉取最新数据..." : "正在加载更多历史记录...";
+        const releaseURL = document.createElement("a");
+        releaseURL.href = /^https:\/\/github\.com\/illria\/nodectl\/releases\//.test(data.release_url || "")
+            ? data.release_url
+            : GITHUB_RELEASES_URL;
+        releaseURL.target = "_blank";
+        releaseURL.rel = "noopener noreferrer";
+        releaseURL.textContent = "在 GitHub 查看 Release 与更新说明";
+        releaseURL.style.cssText = "display:inline-block;margin-top:12px;color:#007aff;text-decoration:none;font-weight:600;";
+        card.appendChild(releaseURL);
+        list.replaceChildren(card);
 
-        try {
-            // 发起请求
-            const res = await fetch(`${GITHUB_API_BASE}?per_page=${PER_PAGE}&page=${page}`);
-            
-            if (!res.ok) {
-                if (res.status === 403) statusEl.innerHTML = "请求过于频繁，请稍后再试 (GitHub API 限制)。";
-                else if (res.status === 404) statusEl.innerHTML = "未找到任何发布记录。";
-                else statusEl.innerHTML = `数据请求失败 (HTTP ${res.status})`;
-                hasMore = false; // 出错后停止继续加载
-                return;
-            }
-            
-            const data = await res.json();
-            // 如果返回的数据少于每页数量，说明没有更多数据了
-            if (data.length < PER_PAGE) hasMore = false;
-
-            if (page === 1) {
-                // 第一页加载时清空现有列表
-                document.getElementById('releaseList').innerHTML = "";
-                allReleases = [];
-                if (data.length === 0) {
-                    statusEl.innerHTML = `暂无版本更新记录<br><span style="font-size:12px;opacity:0.7;">(GitHub 仓库尚未发布 Release)</span>`;
-                    hasMore = false;
-                    return;
-                }
-            }
-
-            allReleases = allReleases.concat(data);
-
-            // 检查是否有新版本 (仅在第一页检查)
-            if (page === 1 && data.length > 0) {
-                const latestRelease = data[0];
-                if (isNewVersionAvailable(RAW_VERSION, latestRelease.tag_name)) {
-                    const badge = document.getElementById('topVersionBadge');
-                    if (badge) {
-                        badge.classList.add('has-update');
-                        const cleanLatest = latestRelease.tag_name.replace(/^v/, '');
-                        badge.title = `发现新版本: ${cleanLatest}，点击查看更新日志`;
-                    }
-                }
-            }
-
-            // 渲染数据
-            renderAppend(data);
-
-            // 更新底部状态文字
-            if (hasMore) {
-                statusEl.innerHTML = "下滑加载更多...";
-            } else {
-                statusEl.innerHTML = "已加载全部历史记录";
-                // 延迟隐藏状态条，让用户看到提示
-                setTimeout(() => { statusEl.style.display = "none"; }, 2000);
-            }
-            currentPage++;
-
-        } catch (e) {
-            console.error("加载更新失败:", e);
-            statusEl.innerHTML = "网络请求失败，无法连接到 GitHub。";
-            hasMore = false;
-        } finally {
-            isFetching = false;
+        const badge = document.getElementById("topVersionBadge");
+        if (badge && data.has_update) {
+            badge.classList.add("has-update");
+            badge.title = `发现新版本: ${latest}，点击查看更新说明`;
+            const arrow = document.getElementById("updateArrowIcon");
+            if (arrow) arrow.style.display = "flex";
         }
     }
 
-    // 简单的 Markdown 解析器
-    function parseReleaseBody(body) {
-        if (!body) return "<span style='color:#999;'>此版本无详细说明。</span>";
-        
-        // ✨ 核心修复：抹除 Windows 系统的 \r 回车符，防止产生双重换行
-        let html = body.replace(/\r/g, '');
-
-        // 转义 HTML 以防止 XSS
-        html = html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        
-        // 处理标题
-        html = html.replace(/^### (.*$)/gm, '<strong>$1</strong>');
-        html = html.replace(/^## (.*$)/gm, '<strong style="font-size:15px;">$1</strong>');
-        
-        // 处理列表项 (将 * 或 - 开头的行转换为列表)
-        html = html.replace(/^[\*\-] (.*$)/gm, '<div style="display:flex;gap:6px;margin-bottom:4px;"><span style="color:#007aff;">•</span><span>$1</span></div>');
-        
-        // 处理强调/加粗
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        
-        // 处理代码块
-        html = html.replace(/`(.*?)`/g, '<code style="background:#f0f0f5;padding:2px 4px;border-radius:4px;font-family:monospace;font-size:13px;">$1</code>');
-        
-        // ✨ 核心修复：防止在块级元素 </div> 之后追加 <br> 导致原生无序列表多出空行
-        html = html.replace(/<\/div>\n/g, '</div>');
-
-        // 将剩余的换行符转换为 <br>
-        return html.replace(/\n/g, '<br>');
-    }
-
-    // 将新数据追加到列表中
-    function renderAppend(items) {
-        const list = document.getElementById('releaseList');
-        let html = "";
-        items.forEach(release => {
-            let dateStr = "未知日期";
-            try {
-                dateStr = new Date(release.published_at).toLocaleDateString('zh-CN', {year:'numeric', month:'2-digit', day:'2-digit'});
-            } catch(e) {}
-            
-            const displayTag = release.tag_name.replace(/^v/, ''); 
-            
-            html += `
-                <div class="release-item">
-                    <div class="release-header">
-                        <span class="release-version">v${displayTag}</span>
-                        <span class="release-date">${dateStr}</span>
-                    </div>
-                    <div class="release-body">${parseReleaseBody(release.body)}</div>
-                </div>
-            `;
-        });
-        // 使用 insertAdjacentHTML 在末尾高效插入新内容
-        list.insertAdjacentHTML('beforeend', html);
+    async function loadReleaseSummary() {
+        const statusEl = document.getElementById("loadingStatus");
+        statusEl.style.display = "block";
+        statusEl.textContent = "正在检查版本...";
+        try {
+            const response = await fetch("/api/check-update");
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            if (result.status !== "success" || !result.data) throw new Error("更新检查响应无效");
+            renderReleaseSummary(result.data);
+            statusEl.style.display = "none";
+            releaseSummaryLoaded = true;
+        } catch (error) {
+            statusEl.textContent = "版本信息暂时不可用，请稍后重试。";
+            console.error("加载版本信息失败:", error);
+        }
     }
 
     // 点击遮罩层关闭
@@ -341,9 +259,8 @@
         // 锁定 body 滚动，防止穿透
         document.body.style.overflow = 'hidden'; 
         
-        // 如果是第一次打开且没有数据，则开始加载
-        if (allReleases.length === 0 && !isFetching && hasMore) {
-            loadReleases(1);
+        if (!releaseSummaryLoaded) {
+            loadReleaseSummary();
         }
     }
 
@@ -368,17 +285,6 @@
             badge.title = "当前版本: " + DISPLAY_VERSION + " (点击查看历史)";
         }
 
-        // 绑定无限滚动事件
-        const bodyContainer = document.getElementById('updateBody');
-        if (bodyContainer) {
-            bodyContainer.addEventListener('scroll', function() {
-                // 滚动条距离底部小于 30px 时触发加载
-                const isNearBottom = this.scrollTop + this.clientHeight >= this.scrollHeight - 30;
-                if (isNearBottom && hasMore && !isFetching) {
-                    loadReleases(currentPage);
-                }
-            });
-        }
     });
 </script>
 {{end}}

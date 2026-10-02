@@ -1,0 +1,98 @@
+name: Build Custom NodeCTL Docker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: custom-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux-binaries:
+    name: Build Linux ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build NodeCTL
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w -X 'nodectl/internal/version.Version=v0.4.76-custom.4'" \
+            -o "bin/nodectl-linux-${GOARCH}" ./main.go
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodectl-linux-${{ matrix.goarch }}
+          path: bin/nodectl-linux-${{ matrix.goarch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  docker:
+    name: Build and Push GHCR Image
+    needs: build-linux-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nodectl-linux-*
+          path: bin
+          merge-multiple: true
+
+      - name: Prepare executable bits
+        run: chmod +x bin/nodectl-linux-*
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repository
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:custom
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

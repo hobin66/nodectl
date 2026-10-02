@@ -1,0 +1,117 @@
+name: Test Custom Routing Changes
+
+on:
+  push:
+    branches:
+      - feat/custom-routing-v4
+
+permissions:
+  contents: read
+
+env:
+  VERSION: v0.4.76-custom.4
+  AGENT_VERSION: v0.2.77
+
+concurrency:
+  group: test-custom-routing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify prepared Agent version
+        run: |
+          grep -Fq 'AGENT_VERSION: v0.2.77' .github/workflows/publish-custom-release.yml
+          grep -Fq 'nodectl-agent-linux-amd64-v0.2.77' README.md
+          grep -Fq 'nodectl-agent-linux-arm64-v0.2.77' README.md
+
+      - name: Run Go tests
+        run: go test ./...
+
+  build-panel:
+    name: Build Panel ${{ matrix.goos }} ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - goos: windows
+            goarch: arm64
+            ext: ".exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build panel
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w -X 'nodectl/internal/version.Version=${VERSION}'" \
+            -o "bin/nodectl-${GOOS}-${GOARCH}${{ matrix.ext }}" ./main.go
+
+  build-agent:
+    name: Build Agent ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p bin
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          GIT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-8)
+          OUT="bin/nodectl-agent-linux-${GOARCH}-${AGENT_VERSION}"
+          go build -trimpath -ldflags="-s -w \
+            -X 'nodectl/internal/agent.AgentVersion=${AGENT_VERSION}' \
+            -X 'nodectl/internal/agent.UpdateRepoOwner=illria' \
+            -X 'nodectl/internal/agent.UpdateRepoName=nodectl' \
+            -X 'nodectl/internal/agent.GitCommit=${GIT_SHA}' \
+            -X 'nodectl/internal/agent.BuildTime=${BUILD_TIME}'" \
+            -o "${OUT}" ./cmd/nodectl-agent/main.go

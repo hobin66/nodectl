@@ -586,21 +586,21 @@ func apiGetNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. [核心修复] 将节点分类为直连和落地，适配前端展示需求
-	var directNodes []database.NodePool
+	// 3. 将节点分类为中转和落地，适配前端展示需求。
+	var relayNodes []database.NodePool
 	var landNodes []database.NodePool
 
 	for _, node := range nodes {
 		if node.RoutingType == 1 {
-			directNodes = append(directNodes, node)
+			relayNodes = append(relayNodes, node)
 		} else if node.RoutingType == 2 {
 			landNodes = append(landNodes, node)
 		}
 	}
 
 	// 确保空切片序列化为 [] 而不是 null
-	if directNodes == nil {
-		directNodes = []database.NodePool{}
+	if relayNodes == nil {
+		relayNodes = []database.NodePool{}
 	}
 	if landNodes == nil {
 		landNodes = []database.NodePool{}
@@ -617,7 +617,7 @@ func apiGetNodes(w http.ResponseWriter, r *http.Request) {
 	// 4. 返回结构化数据
 	sendJSON(w, "success", map[string]interface{}{
 		"data": map[string]interface{}{
-			"direct_nodes":     directNodes,
+			"direct_nodes":     relayNodes, // 保留现有 API 字段名，内容是中转节点。
 			"land_nodes":       landNodes,
 			"panel_url":        config.Value,
 			"tunnel_subdomain": tunnelSubdomainConfig.Value,

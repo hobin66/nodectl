@@ -2580,6 +2580,35 @@
                         </label>
                     </div>
 
+                    <div class="sys-pref-row" style="align-items: center">
+                        <div class="sys-pref-info">
+                            <span class="sys-pref-title" style="display: flex; align-items: center; gap: 4px">
+                                🔄 机场订阅自动同步
+                                <div class="sys-info-tooltip-wrap" tabindex="0">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                    </svg>
+                                    <div class="sys-tooltip-content">
+                                        开启后，后台会按设定间隔串行同步到期的机场订阅。默认每 6 小时同步一次。
+                                    </div>
+                                </div>
+                            </span>
+                        </div>
+                        <label class="sys-toggle-switch">
+                            <input type="checkbox" id="sys_airport_auto_update_enabled" onchange="triggerSysAutoSave()" />
+                            <span class="sys-toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="sys-field">
+                        <label class="sys-label">机场订阅自动同步间隔 (分钟)</label>
+                        <input type="number" id="sys_airport_auto_update_interval_minutes" class="sys-input"
+                            min="1" max="10080" placeholder="默认: 360" oninput="triggerSysAutoSave()" />
+                    </div>
+
                     <!-- 启动时 Agent 静默更新检查开关 -->
                     <div class="sys-pref-row" style="align-items: center">
                         <div class="sys-pref-info">
@@ -3930,6 +3959,10 @@
                     data.pref_ip_strategy || "ipv4_prefer";
                 document.getElementById("sys_airport_filter_invalid").checked =
                     data.airport_filter_invalid === "true";
+                document.getElementById("sys_airport_auto_update_enabled").checked =
+                    parseSysBool(data.airport_auto_update_enabled, true);
+                document.getElementById("sys_airport_auto_update_interval_minutes").value =
+                    data.airport_auto_update_interval_minutes || "360";
                 document.getElementById(
                     "sys_agent_startup_silent_update_enabled",
                 ).checked = data.agent_startup_silent_update_enabled === "true";
@@ -4303,8 +4336,8 @@
             return;
         }
 
-        // 按 routing_type 分组：1=直连, 2=落地, 其他放最后
-        const directNodes = nodes.filter(n => (n.routing_type || 0) === 1);
+        // 按 routing_type 分组：1=中转, 2=落地, 其他放最后
+        const relayNodes = nodes.filter(n => (n.routing_type || 0) === 1);
         const landNodes = nodes.filter(n => (n.routing_type || 0) === 2);
         const otherNodes = nodes.filter(n => (n.routing_type || 0) !== 1 && (n.routing_type || 0) !== 2);
 
@@ -4318,9 +4351,9 @@
         }
 
         let html = '';
-        if (directNodes.length > 0) {
-            html += buildGroupHeader('直连节点', '#34c759', directNodes.length);
-            html += directNodes.map(buildOfflineNotifyNodeRow).join('');
+        if (relayNodes.length > 0) {
+            html += buildGroupHeader('中转节点', '#34c759', relayNodes.length);
+            html += relayNodes.map(buildOfflineNotifyNodeRow).join('');
         }
         if (landNodes.length > 0) {
             html += buildGroupHeader('落地节点', '#f5a623', landNodes.length);
@@ -4792,6 +4825,14 @@
                 ).checked
                     ? "true"
                     : "false", // ✨ 新增：提交剔除无效节点开关
+                airport_auto_update_enabled: document.getElementById(
+                    "sys_airport_auto_update_enabled",
+                ).checked
+                    ? "true"
+                    : "false",
+                airport_auto_update_interval_minutes: document.getElementById(
+                    "sys_airport_auto_update_interval_minutes",
+                ).value,
                 agent_startup_silent_update_enabled: document.getElementById(
                     "sys_agent_startup_silent_update_enabled",
                 ).checked

@@ -67,6 +67,8 @@ func initBasicSettings() {
 		{Key: "cf_cert_enabled", Value: "false", Description: "是否启用本地证书(HTTPS)"},
 		{Key: "cf_auto_renew", Value: "true", Description: "是否开启证书自动续期"},
 		{Key: "airport_filter_invalid", Value: "false", Description: "是否剔除机场订阅中的无效节点"},
+		{Key: "airport_auto_update_enabled", Value: "true", Description: "是否自动同步机场订阅"},
+		{Key: "airport_auto_update_interval_minutes", Value: "360", Description: "机场订阅自动同步间隔(分钟)"},
 		{Key: "pref_speed_test_file_size", Value: "50", Description: "节点测速文件大小(MB)"},
 		{Key: "pref_traffic_stats_retention_days", Value: "14", Description: "流量统计记录最长保留天数"},
 

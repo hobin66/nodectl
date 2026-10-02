@@ -1,8 +1,12 @@
 ﻿# 🎯 NodeCtl：你的个人节点管理神器
 
+> 本仓库为 **illria 独立维护版**，基于上游 `hobin66/nodectl` 持续维护。面板安装、GitHub Release、Docker 镜像与后续版本均由 `illria/nodectl` 独立发布。
+>
+> 当前准备版本：**`v0.4.76-custom.4`** ｜ Release：<https://github.com/illria/nodectl/releases/latest>
+
 > 一个轻量、高效、功能强大的个人节点与订阅管理面板
 
-📢 **TG 频道**：https://t.me/nodectl
+📢 **上游项目 TG 频道**：https://t.me/nodectl
 
 ---
 
@@ -130,50 +134,171 @@ NodeCtl 采用 **Agent + 中心面板** 架构，为你的节点提供强大的�
 
 ## 🚀 三分钟快速部署
 
-写在前面：tunnel隧道原生支持IPV4和IPV6，如果你需要安装agnet，建议使用tunnel域名。（agnet会和安装singbox同步安装，并默认自动更新）
+> **重要：本仓库已经独立发布。**
+>
+> 请使用 `illria/nodectl` 的 Release、GHCR 镜像和安装脚本，不要再使用 `hobin66/nodectl` 的安装地址。
+>
+> 当前准备版本为 `v0.4.76-custom.4`；发布前请继续使用已发布的 `v0.4.76-custom.3`。
+
+写在前面：Tunnel 隧道原生支持 IPv4 和 IPv6。如果需要安装 Agent，建议优先使用 Tunnel 域名。
 
 ### 方式一：Docker Run（推荐）
 
+先拉取当前稳定镜像：
+
 ```bash
+docker pull ghcr.io/illria/nodectl:v0.4.76-custom.4
+```
+
+启动：
+
+```bash
+mkdir -p /opt/nodectl/data
+
 docker run -d \
   --name nodectl \
   --restart unless-stopped \
   -p 7878:8080 \
+  --log-opt max-size=10m \
+  --log-opt max-file=2 \
   -v /opt/nodectl/data:/app/data \
-  ghcr.io/hobin66/nodectl:latest
+  ghcr.io/illria/nodectl:v0.4.76-custom.4
+```
+
+访问：
+
+```text
+http://你的服务器IP:7878
+```
+
+默认账号：
+
+```text
+admin / admin
+```
+
+首次登录后请立即修改密码。
+
+如果希望始终跟随本仓库最新构建，可将镜像改为：
+
+```text
+ghcr.io/illria/nodectl:latest
 ```
 
 ### 方式二：Docker Compose
 
 ```yaml
-version: '3'
 services:
   nodectl:
-    image: ghcr.io/hobin66/nodectl:latest
+    image: ghcr.io/illria/nodectl:v0.4.76-custom.4
     container_name: nodectl
     restart: unless-stopped
     ports:
       - "7878:8080"
     volumes:
-      - ./data:/app/data
+      - /opt/nodectl/data:/app/data
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "2"
 ```
 
-运行 `docker-compose up -d` 即可启动！
-
-### 方式三：二进制脚本安装
-
-适合不想使用 Docker 的用户，支持 Debian/Ubuntu 和 Alpine 系统：
+启动：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hobin66/nodectl/main/install.sh)
+docker compose up -d
 ```
 
-安装完成后：
-- 二进制文件位于 `/opt/nodectl/nodectl`
-- 数据目录位于 `/opt/nodectl/data`
-- 可执行命令 `nt` 管理服务（如 `nt start`、`nt stop`、`nt status`）
+### 方式三：Release 二进制一键安装
 
-部署成功后访问 `http://你的IP:8080`，使用默认账号 `admin` / `admin` 登录。
+适合不想使用 Docker 的用户。安装脚本会从 **本仓库 GitHub Releases** 自动识别最新稳定版，并下载对应架构的二进制。
+
+root 用户：
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/illria/nodectl/main/install.sh)"
+```
+
+非 root 用户：
+
+```bash
+sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/illria/nodectl/main/install.sh)"
+```
+
+支持：
+
+- Debian / Ubuntu
+- Alpine Linux
+- Linux amd64
+- Linux arm64
+
+安装完成后：
+
+- 主程序：`/opt/nodectl/nodectl`
+- 数据目录：`/opt/nodectl/data`
+- 管理命令：`nt`
+- 二进制安装默认 Web 端口：`8080`
+
+常用管理命令：
+
+```bash
+nt status
+nt start
+nt stop
+nt restart
+```
+
+### Release 包说明
+
+每个正式版本应至少包含以下面板文件：
+
+```text
+nodectl-linux-amd64
+nodectl-linux-arm64
+nodectl-windows-amd64.exe
+nodectl-windows-arm64.exe
+```
+
+Agent 包：
+
+```text
+nodectl-agent-linux-amd64-v0.2.77
+nodectl-agent-linux-amd64-v0.2.77.sha256
+nodectl-agent-linux-arm64-v0.2.77
+nodectl-agent-linux-arm64-v0.2.77.sha256
+```
+
+所有正式包统一从这里获取：
+
+<https://github.com/illria/nodectl/releases/latest>
+
+### Docker 升级
+
+数据目录使用 `/opt/nodectl/data` 持久化时，可以直接替换容器，原有数据库和配置不会丢失：
+
+```bash
+docker pull ghcr.io/illria/nodectl:v0.4.76-custom.4 && \
+docker stop nodectl && \
+docker rm nodectl && \
+docker run -d \
+  --name nodectl \
+  --restart unless-stopped \
+  -p 7878:8080 \
+  --log-opt max-size=10m \
+  --log-opt max-file=2 \
+  -v /opt/nodectl/data:/app/data \
+  ghcr.io/illria/nodectl:v0.4.76-custom.4
+```
+
+### 镜像 / Release 对应关系
+
+| 用途 | 地址 |
+|---|---|
+| 当前准备 Docker | `ghcr.io/illria/nodectl:v0.4.76-custom.4` |
+| 跟随 main | `ghcr.io/illria/nodectl:latest` |
+| 自定义通道 | `ghcr.io/illria/nodectl:custom` |
+| GitHub Release | `https://github.com/illria/nodectl/releases/latest` |
+| 安装脚本 | `https://raw.githubusercontent.com/illria/nodectl/main/install.sh` |
 
 ---
 

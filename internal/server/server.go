@@ -243,6 +243,7 @@ func Start(tmplFS embed.FS) {
 	service.InitTrafficThresholdCache()
 	service.StartTrafficAutoResetLoop()
 	service.StartAutoUpdateScheduler()
+	service.StartAirportSubscriptionAutoUpdate()
 	service.StartOfflineNotifyLoop()
 	service.StartAgentStartupSilentUpdateCheck()
 	service.StartUpdateCheckBackground() // 后台定期检查程序版本更新

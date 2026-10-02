@@ -1987,7 +1987,7 @@
             const protoTag = node.protocol ? `<span class="air-proto-tag">${node.protocol}</span>` : '';
 
             // 当前选中状态图标
-            let activeIcon = node.routing_type === 1 ? '🔵 直连' : (node.routing_type === 2 ? '🟠 落地' : '⭕ 禁用');
+            let activeIcon = node.routing_type === 1 ? '🔵 中转' : (node.routing_type === 2 ? '🟠 落地' : '⭕ 禁用');
             let iconColor = node.routing_type === 1 ? 'var(--air-primary)' : (node.routing_type === 2 ? 'var(--air-warning)' : 'var(--air-danger)');
 
             // --- 新增：根据当前测试状态动态渲染按钮图标 ---
@@ -2025,7 +2025,7 @@
                         <div class="air-routing-wrapper" id="dropdown-${node.id}">
                             <div class="air-routing-capsule">
                                 <button class="air-capsule-item ${node.routing_type === 0 ? 'active' : ''}" data-val="0" onclick="setAirNodeRouting('${node.id}', 0, '${containerId}', event)">禁用</button>
-                                <button class="air-capsule-item ${node.routing_type === 1 ? 'active' : ''}" data-val="1" onclick="setAirNodeRouting('${node.id}', 1, '${containerId}', event)">直连</button>
+                                <button class="air-capsule-item ${node.routing_type === 1 ? 'active' : ''}" data-val="1" onclick="setAirNodeRouting('${node.id}', 1, '${containerId}', event)">中转</button>
                                 <button class="air-capsule-item ${node.routing_type === 2 ? 'active' : ''}" data-val="2" onclick="setAirNodeRouting('${node.id}', 2, '${containerId}', event)">落地</button>
                             </div>
                             <button class="air-circle-btn" title="修改分组" onclick="toggleRoutingMenu('${node.id}', event)" style="color: ${iconColor}; border-color: ${node.routing_type === 0 ? 'var(--air-border)' : iconColor};">

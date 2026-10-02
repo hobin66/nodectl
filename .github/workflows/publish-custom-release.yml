@@ -1,0 +1,208 @@
+name: Publish Custom Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  VERSION: v0.4.76-custom.4
+  AGENT_VERSION: v0.2.77
+  IMAGE: ghcr.io/illria/nodectl
+
+jobs:
+  build-panel:
+    if: "${{ github.event.head_commit.message == 'release: publish v0.4.76-custom.4' }}"
+    name: Build Panel ${{ matrix.goos }} ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - goos: windows
+            goarch: arm64
+            ext: ".exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build panel
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w -X 'nodectl/internal/version.Version=${VERSION}'" \
+            -o "bin/nodectl-${GOOS}-${GOARCH}${{ matrix.ext }}" ./main.go
+
+      - name: Upload panel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panel-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/nodectl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          retention-days: 1
+
+  build-agent:
+    if: "${{ github.event.head_commit.message == 'release: publish v0.4.76-custom.4' }}"
+    name: Build Agent ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p bin
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          GIT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-8)
+          OUT="bin/nodectl-agent-linux-${GOARCH}-${AGENT_VERSION}"
+          go build -trimpath -ldflags="-s -w \
+            -X 'nodectl/internal/agent.AgentVersion=${AGENT_VERSION}' \
+            -X 'nodectl/internal/agent.UpdateRepoOwner=illria' \
+            -X 'nodectl/internal/agent.UpdateRepoName=nodectl' \
+            -X 'nodectl/internal/agent.GitCommit=${GIT_SHA}' \
+            -X 'nodectl/internal/agent.BuildTime=${BUILD_TIME}'" \
+            -o "${OUT}" ./cmd/nodectl-agent/main.go
+          sha256sum "${OUT}" > "${OUT}.sha256"
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.goarch }}
+          path: |
+            bin/nodectl-agent-linux-${{ matrix.goarch }}-${{ env.AGENT_VERSION }}
+            bin/nodectl-agent-linux-${{ matrix.goarch }}-${{ env.AGENT_VERSION }}.sha256
+          retention-days: 1
+
+  publish-release:
+    if: "${{ github.event.head_commit.message == 'release: publish v0.4.76-custom.4' }}"
+    name: Publish GitHub Release
+    needs: [build-panel, build-agent]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download panel binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: panel-*
+          path: bin
+          merge-multiple: true
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: bin
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: NodeCTL Custom ${{ env.VERSION }}
+          body: |
+            illria/nodectl 独立维护版，基于上游 NodeCTL v0.4.76。
+
+            ### v0.4.76-custom.4
+            - 重排 Clash 策略组：总模式、中转策略、手动选择、软件策略、地区与自动组、辅助组
+            - 删除默认代理和总自动选择，MATCH 直接进入总模式
+            - 新增中转关闭直连节点，落地机场通过中转策略统一控制 dialer-proxy
+            - 地区策略与对应自动组按国家成对排列
+            - 软件策略提前，并以总模式作为第一项
+            - 将加密货币图标替换为可加载的 Bitcoin SVG
+            - Mihomo 稳定版下载改用 Releases 重定向，不再依赖 GitHub API
+            - CloudflareST、cloudflared、NodeCTL 与 Agent 稳定版检查移除 GitHub API 依赖
+            - install.sh 稳定版安装与更新通过 Releases 重定向获取版本
+            - 新增默认开启的机场订阅自动同步，默认间隔 6 小时
+            - Agent 更新为 v0.2.77，启动检查按 Agent 产物版本判断升级
+
+            ### Docker
+            `ghcr.io/illria/nodectl:v0.4.76-custom.4`
+
+            也提供：
+            - `ghcr.io/illria/nodectl:latest`
+            - `ghcr.io/illria/nodectl:custom`
+          files: bin/*
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+  publish-image:
+    if: "${{ github.event.head_commit.message == 'release: publish v0.4.76-custom.4' }}"
+    name: Publish Docker Image
+    needs: build-panel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux panel binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: panel-linux-*
+          path: bin
+          merge-multiple: true
+
+      - name: Make binaries executable
+        run: chmod +x bin/nodectl-linux-amd64 bin/nodectl-linux-arm64
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.VERSION }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:custom
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
